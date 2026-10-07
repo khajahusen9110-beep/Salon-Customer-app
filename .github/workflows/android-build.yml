@@ -21,8 +21,7 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - uses: android-actions/setup-android@v3
-
+      # ubuntu-latest ships with the Android SDK (ANDROID_HOME); AGP downloads the exact platform it needs.
       - uses: gradle/actions/setup-gradle@v4
 
       # build.gradle.kts signs debug builds with ./debug.keystore, which is (correctly) not committed.
