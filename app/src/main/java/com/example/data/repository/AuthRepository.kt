@@ -20,6 +20,8 @@ class AuthRepository(private val context: Context) {
     val currentLanguage: StateFlow<String> = _currentLanguage.asStateFlow()
 
     private fun loadSavedProfile(): UserProfile? {
+        // A cached profile without a live Supabase session is not a logged-in user.
+        if (!supabaseClient.hasSession) return null
         val email = prefs.getString("user_email", null) ?: return null
         val id = prefs.getString("user_id", null) ?: return null
         val name = prefs.getString("user_name", "") ?: ""
@@ -77,6 +79,10 @@ class AuthRepository(private val context: Context) {
 
     suspend fun signUp(email: String, pass: String, fullName: String): Result<UserProfile> {
         val res = supabaseClient.signUp(email, pass, fullName)
+        if (res.isSuccess && !supabaseClient.hasSession) {
+            // Email confirmation is enabled: the account exists but there is no session yet.
+            return Result.failure(Exception("Account created. Please confirm your email, then sign in."))
+        }
         if (res.isSuccess) {
             val userObj = res.getOrNull()?.optJSONObject("user")
             val id = userObj?.optString("id") ?: supabaseClient.currentUserId ?: ""

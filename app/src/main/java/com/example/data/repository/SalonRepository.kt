@@ -574,7 +574,7 @@ class SalonRepository(private val context: Context) {
                 val delayMins = json.optInt("delay_minutes", 0)
                 val peopleAhead = json.optInt("people_ahead", 0)
                 val scheduled = json.optString("scheduled_start", "")
-                val estimated = json.optString("estimated_start", scheduled)
+                val estimated = json.optString("expected_start", scheduled)
                 val msg = if (delayMins > 0) {
                     "Delayed by ~$delayMins min — estimated start at $estimated"
                 } else if (scheduled.isNotEmpty()) {
@@ -972,7 +972,7 @@ class SalonRepository(private val context: Context) {
         val srvName = serviceObj?.optString("name") ?: json.optString("service_name", "Service")
         val stName = staffObj?.optString("name") ?: json.optString("stylist_name", "Stylist")
         val defaultPrice = serviceObj?.optDouble("price", 0.0) ?: 0.0
-        val price = json.optDouble("total_price", defaultPrice)
+        val price = json.optDouble("price", defaultPrice)
 
         return BookingItem(
             id = json.optString("id"),

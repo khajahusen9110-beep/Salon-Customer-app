@@ -695,8 +695,7 @@ fun SalonDetailScreen(
 
                 items(combos) { combo ->
                     ComboPackageCard(
-                        combo = combo,
-                        onBook = { onBookService(salonId, null, combo.id) }
+                        combo = combo
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                 }
@@ -1211,8 +1210,7 @@ fun ServiceCard(
 
 @Composable
 fun ComboPackageCard(
-    combo: ComboItem,
-    onBook: () -> Unit
+    combo: ComboItem
 ) {
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -1290,15 +1288,15 @@ fun ComboPackageCard(
                     }
                 }
 
-                Button(
-                    onClick = onBook,
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Slate900),
-                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 6.dp),
-                    modifier = Modifier.testTag("book_combo_${combo.id}")
-                ) {
-                    Text("Book Package", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.White)
-                }
+                // Online booking of packages is not supported by the backend yet (a booking holds a single
+                // service); booking here used to reserve an unrelated service at the wrong price.
+                Text(
+                    text = "Ask at the salon",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Slate600,
+                    modifier = Modifier.testTag("combo_info_${combo.id}")
+                )
             }
         }
     }
