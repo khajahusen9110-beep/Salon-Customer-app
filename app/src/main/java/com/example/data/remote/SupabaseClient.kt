@@ -297,6 +297,23 @@ class SupabaseClient(context: Context) {
         }
     }
 
+    /** Permanently deletes the signed-in account (Play Store requirement). */
+    suspend fun deleteMyAccount(): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/delete_my_account", "POST", "{}")
+            val response = httpClient.newCall(request).execute()
+            val body = response.body?.string() ?: ""
+            if (response.isSuccessful) {
+                clearSession()
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception(extractErrorMessage(response.code, body)))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception("No internet connection. Please try again."))
+        }
+    }
+
     // Salons REST table
     suspend fun getSalons(): Result<JSONArray> = withContext(Dispatchers.IO) {
         try {

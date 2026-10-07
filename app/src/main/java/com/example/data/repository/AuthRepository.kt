@@ -129,6 +129,17 @@ class AuthRepository(private val context: Context) {
         }
     }
 
+    /** Deletes the account on the server, then clears everything stored on this device. */
+    suspend fun deleteAccount(): Result<Unit> {
+        val res = supabaseClient.deleteMyAccount()
+        if (res.isSuccess) {
+            prefs.edit().clear().apply()
+            context.getSharedPreferences("salon_favs", Context.MODE_PRIVATE).edit().clear().apply()
+            _currentUser.value = null
+        }
+        return res
+    }
+
     suspend fun signOut() {
         supabaseClient.signOutRemote()
         prefs.edit().clear().apply()

@@ -51,6 +51,9 @@ fun ProfileScreen(
     var anonKeyInput by remember { mutableStateOf(authRepo.supabaseClient.anonKey) }
     var connectionStatus by remember { mutableStateOf<String?>(null) }
     var isTestingConnection by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var isDeleting by remember { mutableStateOf(false) }
+    var deleteError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         isLoadingRebook = true
@@ -464,8 +467,8 @@ fun ProfileScreen(
                 }
             }
 
-            // Supabase Backend Integration Details Card
-            Card(
+            // Supabase backend details / key override: developer builds only
+            if (com.example.BuildConfig.DEBUG) Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 modifier = Modifier.fillMaxWidth().testTag("backend_card")
@@ -537,6 +540,55 @@ fun ProfileScreen(
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
             }
+
+            TextButton(
+                onClick = { deleteError = null; showDeleteDialog = true },
+                modifier = Modifier.fillMaxWidth().testTag("delete_account_button")
+            ) {
+                Text("Delete my account", color = MaterialTheme.colorScheme.error)
+            }
+        }
+
+        if (showDeleteDialog) {
+            AlertDialog(
+                onDismissRequest = { if (!isDeleting) showDeleteDialog = false },
+                title = { Text("Delete account?", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column {
+                        Text(
+                            "Your account, profile and favourites will be permanently deleted. Upcoming bookings will be " +
+                                "cancelled. Past visits stay with the salon without your name or phone number. This cannot be undone.",
+                            fontSize = 13.sp
+                        )
+                        if (deleteError != null) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(deleteError ?: "", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        enabled = !isDeleting,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        onClick = {
+                            isDeleting = true
+                            scope.launch {
+                                val res = authRepo.deleteAccount()
+                                isDeleting = false
+                                if (res.isSuccess) {
+                                    showDeleteDialog = false
+                                    onSignOut()
+                                } else {
+                                    deleteError = res.exceptionOrNull()?.message ?: "Could not delete account. Please try again."
+                                }
+                            }
+                        }
+                    ) { Text(if (isDeleting) "Deleting..." else "Delete permanently") }
+                },
+                dismissButton = {
+                    TextButton(enabled = !isDeleting, onClick = { showDeleteDialog = false }) { Text("Cancel") }
+                }
+            )
         }
 
         // Supabase Backend Config Dialog
