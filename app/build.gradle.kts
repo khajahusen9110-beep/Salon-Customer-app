@@ -11,7 +11,7 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.saloncust.kxmpzq"
+    applicationId = "com.qfreesalon.customer"
     minSdk = 24
     targetSdk = 36
     // CI passes the build number so every Play Store upload gets a higher versionCode.
