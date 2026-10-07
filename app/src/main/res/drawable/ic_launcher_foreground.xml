@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Glow Accent Circle -->
+    <path
+        android:fillColor="#22F59E0B"
+        android:pathData="M54,54m-28,0a28,28 0,1 1,56 0a28,28 0,1 1,-56 0" />
+    <!-- Stylized Modern Scissor Blades (Gold #F59E0B and Amber #FBBF24) -->
+    <path
+        android:fillColor="#FBBF24"
+        android:pathData="M39,36 L68,65 C69.5,66.5 69.5,68.5 68,70 L66,72 C64.5,73.5 62.5,73.5 61,72 L47,58 C44,61 40,63 36,61 C32,59 30,55 32,50 C33.5,46 37,45 40,46 L44,50 L48,46 L40,38 C39,37 38.5,35.5 39,34 C40,30 45,28 49,31 C52,33 52,37 49,40 L44,45 L58,59 L71,46 C72.5,44.5 74.5,44.5 76,46 L77,47 C78.5,48.5 78.5,50.5 77,52 L62,67" />
+    <!-- Center Pivot Gem -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,54m-4,0a4,4 0,1 1,8 0a4,4 0,1 1,-8 0" />
+    <path
+        android:fillColor="#D97706"
+        android:pathData="M54,54m-2.5,0a2.5,2.5 0,1 1,5 0a2.5,2.5 0,1 1,-5 0" />
+    <!-- Premium Crown / Sparkle motif -->
+    <path
+        android:fillColor="#FDE68A"
+        android:pathData="M72,30 L73.5,34 L77.5,35.5 L73.5,37 L72,41 L70.5,37 L66.5,35.5 L70.5,34 Z" />
+    <path
+        android:fillColor="#FDE68A"
+        android:pathData="M34,68 L35,71 L38,72 L35,73 L34,76 L33,73 L30,72 L33,71 Z" />
+</vector>

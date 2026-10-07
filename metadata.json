@@ -1,0 +1,6 @@
+{
+  "name": "QFree Salon",
+  "description": "Find premium salons, skip the wait, track live queue and book appointments instantly.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

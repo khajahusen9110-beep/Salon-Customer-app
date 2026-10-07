@@ -1,0 +1,28 @@
+{
+  "short_name": "Velvet",
+  "name": "Velvet Salon — Live Queue & Zero-Wait Booking",
+  "icons": [
+    {
+      "src": "/assets/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    },
+    {
+      "src": "/assets/icon-512-maskable.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#0F172A",
+  "theme_color": "#0F172A",
+  "display": "standalone",
+  "orientation": "portrait",
+  "description": "Speed-first luxury salon booking with zero-wait guarantees, live queue tracking, and late-start compensation credits."
+}

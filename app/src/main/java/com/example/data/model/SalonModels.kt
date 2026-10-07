@@ -1,0 +1,215 @@
+package com.example.data.model
+
+data class UserProfile(
+    val id: String,
+    val email: String,
+    val fullName: String,
+    val phone: String = "",
+    val role: String = "customer",
+    val language: String = "en"
+)
+
+data class Salon(
+    val id: String,
+    val name: String,
+    val salonType: String, // "Men", "Women", "Unisex"
+    val area: String,
+    val city: String,
+    val address: String = "",
+    val phone: String = "",
+    val description: String = "",
+    val photos: List<String> = emptyList(),
+    val coverPhotoIndex: Int = 0,
+    val ratingAvg: Double = 0.0,
+    val ratingCount: Int = 0,
+    val isVerified: Boolean = true,
+    val isActive: Boolean = true,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val bookingWindowDays: Int = 14
+) {
+    val coverPhotoUrl: String
+        get() = if (photos.isNotEmpty() && coverPhotoIndex in photos.indices) {
+            photos[coverPhotoIndex]
+        } else if (photos.isNotEmpty()) {
+            photos.first()
+        } else {
+            ""
+        }
+}
+
+data class SalonHours(
+    val id: String = "",
+    val salonId: String = "",
+    val dayOfWeek: Int = 0, // 0 = Sun, 1 = Mon, ..., 6 = Sat
+    val dayName: String = "",
+    val openTime: String = "10:00 AM",
+    val closeTime: String = "08:00 PM",
+    val isClosed: Boolean = false
+)
+
+data class ServiceCategory(
+    val id: String,
+    val salonId: String,
+    val name: String,
+    val sortOrder: Int = 0,
+    val imageUrl: String? = null
+)
+
+data class ServiceItem(
+    val id: String,
+    val salonId: String,
+    val categoryId: String,
+    val categoryName: String = "",
+    val name: String,
+    val duration: Int, // duration in minutes
+    val price: Double,
+    val description: String = "",
+    val imageUrl: String? = null,
+    val isActive: Boolean = true,
+    val isExpress: Boolean = false
+) {
+    val formattedDuration: String
+        get() = formatDuration(duration)
+
+    companion object {
+        fun formatDuration(mins: Int): String {
+            return when {
+                mins < 60 -> "$mins min"
+                mins % 60 == 0 -> "${mins / 60} hr"
+                else -> "${mins / 60} hr ${mins % 60} min"
+            }
+        }
+    }
+}
+
+data class ComboItem(
+    val id: String,
+    val salonId: String,
+    val name: String,
+    val price: Double,
+    val originalPrice: Double = 0.0,
+    val description: String = "",
+    val serviceNames: List<String> = emptyList(),
+    val durationMinutes: Int = 0
+) {
+    val savings: Double
+        get() = (originalPrice - price).coerceAtLeast(0.0)
+}
+
+data class StaffMember(
+    val id: String,
+    val salonId: String,
+    val name: String,
+    val photoUrl: String = "",
+    val ratingAvg: Double = 0.0,
+    val ratingCount: Int = 0,
+    val title: String = "Stylist",
+    val slotsCountToday: Int = 0
+)
+
+data class DayAvailability(
+    val dateString: String, // e.g. "2026-09-24"
+    val dayName: String,    // e.g. "Wed"
+    val dayNumber: String,  // e.g. "24"
+    val slotCount: Int = 0
+)
+
+data class TimeSlot(
+    val slotStart: String,     // e.g. "2026-09-24T10:30:00"
+    val displayTime: String,   // e.g. "10:30 AM"
+    val period: String,        // "Morning", "Afternoon", "Evening"
+    val stylistsAvailable: Int = 1
+)
+
+data class QueueStatus(
+    val salonId: String,
+    val stylistsFree: Int = 0,
+    val waitMinutes: Int = 0,
+    val isBusy: Boolean = false,
+    val queueLength: Int = 0,
+    val messageEn: String = "Queue status available",
+    val messageHi: String = "कतार स्थिति उपलब्ध"
+)
+
+data class BookingItem(
+    val id: String,
+    val salonId: String,
+    val salonName: String,
+    val salonArea: String,
+    val salonPhotoUrl: String = "",
+    val serviceId: String = "",
+    val serviceName: String,
+    val staffId: String? = null,
+    val stylistName: String = "Stylist",
+    val price: Double,
+    val date: String,
+    val timeSlot: String,
+    val startTimeIso: String = "",
+    val status: String, // "confirmed", "arrived", "in_service", "completed", "cancelled", "no_show"
+    val queuePosition: Int = 1,
+    val waitMinutes: Int = 0,
+    val delayMinutes: Int = 0,
+    val peopleAhead: Int = 0,
+    val isToday: Boolean = true,
+    val notes: String = "",
+    val isReviewed: Boolean = false,
+    val userRating: Int = 0,
+    val reviewComment: String = "",
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+data class BookingLiveStatus(
+    val bookingId: String,
+    val status: String,
+    val waitMinutes: Int = 0,
+    val delayMinutes: Int = 0,
+    val peopleAhead: Int = 0,
+    val scheduledStart: String = "",
+    val estimatedStart: String = "",
+    val message: String = ""
+)
+
+data class ReviewItem(
+    val id: String,
+    val bookingId: String = "",
+    val salonId: String,
+    val customerName: String,
+    val rating: Int,
+    val comment: String,
+    val date: String,
+    val ownerReply: String? = null,
+    val ownerReplyDate: String? = null
+)
+
+data class RebookOption(
+    val salonId: String,
+    val salonName: String,
+    val salonArea: String,
+    val salonPhotoUrl: String = "",
+    val stylistId: String? = null,
+    val stylistName: String,
+    val serviceId: String,
+    val serviceName: String,
+    val price: Double,
+    val lastVisitDate: String
+)
+
+data class SalonCredit(
+    val salonId: String,
+    val salonName: String,
+    val balance: Double,
+    val reason: String = "Late start credit"
+)
+
+data class NotificationItem(
+    val id: String,
+    val userId: String,
+    val title: String,
+    val body: String,
+    val type: String, // "booking_cancelled", "booking_rescheduled", "reminder", "delay_alert", "late_credit"
+    val bookingId: String? = null,
+    val isRead: Boolean = false,
+    val createdAtIso: String = "",
+    val relativeTime: String = "Just now"
+)
