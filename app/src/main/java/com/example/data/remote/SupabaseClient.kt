@@ -399,7 +399,11 @@ class SupabaseClient(context: Context) {
     // Services REST table
     suspend fun getServices(salonId: String): Result<JSONArray> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/services?salon_id=eq.$salonId&is_active=eq.true&select=id,salon_id,category_id,name,duration_minutes,price,description,image_url,is_active,is_express,service_categories(id,name)&order=price.asc"
+            // Only services at least one active stylist does (bookable:...!inner drops the rest).
+            val url = "$DEFAULT_BASE_URL/rest/v1/services?salon_id=eq.$salonId&is_active=eq.true" +
+                "&select=id,salon_id,category_id,name,duration_minutes,price,description,image_url,is_active,is_express," +
+                "service_categories(id,name),bookable:staff_services!inner(staff!inner(id))" +
+                "&bookable.staff.is_active=eq.true&order=price.asc"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"
