@@ -336,14 +336,26 @@ fun BookingListCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                AsyncImage(
-                    model = booking.salonPhotoUrl.ifEmpty { "https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=400&q=80" },
-                    contentDescription = booking.salonName,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(54.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                )
+                if (booking.salonPhotoUrl.isNotBlank()) {
+                    AsyncImage(
+                        model = booking.salonPhotoUrl,
+                        contentDescription = booking.salonName,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(54.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(54.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.ContentCut, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
 
                 Spacer(modifier = Modifier.width(12.dp))
 

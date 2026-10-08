@@ -507,31 +507,7 @@ fun SalonCard(
                     }
                 }
 
-                // Live Availability Teaser Pill
-                Surface(
-                    color = Color.Black.copy(alpha = 0.75f),
-                    shape = RoundedCornerShape(topStart = 12.dp),
-                    modifier = Modifier.align(Alignment.BottomEnd)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(EmeraldLive)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "2 stylists free now",
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
+                // Live stylist availability is shown on the salon page (real queue data).
             }
 
             // Card Body
