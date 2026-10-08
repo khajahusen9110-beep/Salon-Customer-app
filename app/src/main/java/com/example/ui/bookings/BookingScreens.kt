@@ -68,7 +68,7 @@ fun MyBookingsScreen(
 
     // Split bookings into Upcoming and Past
     val upcomingBookings = remember(bookings) {
-        bookings.filter { it.status.lowercase() in listOf("confirmed", "arrived", "in_service", "in_queue") }
+        bookings.filter { it.status.lowercase() in listOf("pending_payment", "confirmed", "arrived", "in_service", "in_queue") }
     }
     val pastBookings = remember(bookings) {
         bookings.filter { it.status.lowercase() in listOf("completed", "cancelled", "no_show") }
@@ -385,6 +385,7 @@ fun BookingListCard(
 
                 Surface(
                     color = when (statusLower) {
+                        "pending_payment" -> GoldContainer
                         "confirmed" -> EmeraldContainer
                         "in_queue", "arrived" -> EmeraldContainer
                         "in_service" -> GoldContainer
@@ -396,6 +397,7 @@ fun BookingListCard(
                 ) {
                     Text(
                         text = when (statusLower) {
+                            "pending_payment" -> "PAYMENT PENDING"
                             "confirmed" -> if (booking.isToday) "TODAY" else "CONFIRMED"
                             "in_queue" -> "IN QUEUE (#${booking.queuePosition})"
                             "arrived" -> "ARRIVED"
@@ -407,6 +409,7 @@ fun BookingListCard(
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         color = when (statusLower) {
+                            "pending_payment" -> GoldPrimary
                             "confirmed", "in_queue", "arrived" -> Color(0xFF065F46)
                             "in_service" -> GoldPrimary
                             "cancelled" -> Color(0xFFB91C1C)
@@ -866,6 +869,7 @@ fun BookingTrackerScreen(
                     DetailRow("Service", booking.serviceName)
                     DetailRow("Date & Time", "${booking.date} at ${booking.timeSlot}")
                     DetailRow("Total Amount", "₹${booking.price.toInt()}")
+                    paymentSummary(booking)?.let { DetailRow("Payment", it, highlight = true) }
 
                     if (booking.notes.isNotEmpty()) {
                         DetailRow("Notes for Stylist", booking.notes)
@@ -1021,7 +1025,12 @@ fun BookingTrackerScreen(
         }
     }
 
-    // Cancel Confirmation Dialog
+    // Cancel Confirmation Dialog (shows the refund the customer will get, from the server's rules)
+    var cancelTerms by remember { mutableStateOf<CancellationTerms?>(null) }
+    LaunchedEffect(showCancelDialog) {
+        cancelTerms = null
+        if (showCancelDialog) cancelTerms = salonRepo.getCancellationTerms(bookingId).getOrNull()
+    }
     if (showCancelDialog) {
         AlertDialog(
             onDismissRequest = { showCancelDialog = false },
@@ -1029,6 +1038,16 @@ fun BookingTrackerScreen(
             text = {
                 Column {
                     Text("Are you sure you want to cancel your booking at ${booking?.salonName}?")
+                    val terms = cancelTerms
+                    if (terms != null && (terms.refundAmount > 0 || terms.keptAmount > 0)) {
+                        Text(
+                            text = terms.message,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (terms.keptAmount > 0) Color(0xFFB91C1C) else Color(0xFF065F46),
+                            modifier = Modifier.padding(top = 8.dp).testTag("cancel_refund_terms")
+                        )
+                    }
                     Text(
                         text = "Cancelling frees up the stylist for other customers. You can book again anytime.",
                         fontSize = 12.sp,
@@ -1302,4 +1321,20 @@ fun ReviewDialog(
             }
         }
     )
+}
+
+/** One-line payment state for a booking, e.g. "₹80 paid (20% advance)" or "Refund of ₹80 started". */
+private fun paymentSummary(b: BookingItem): String? {
+    val paid = "₹${b.amountPaid.toInt()}"
+    val kind = if (b.paymentOption == "full") "full payment" else "20% advance"
+    return when (b.paymentStatus) {
+        "pending" -> "Waiting for payment of ₹${b.amountDue.toInt()}"
+        "paid" -> if (b.paymentOption == "full") "$paid paid online (nothing to pay at salon)"
+                  else "$paid paid ($kind) • ₹${(b.price - b.amountPaid).toInt()} at salon"
+        "refund_pending" -> "Refund of $paid started (5-7 working days)"
+        "refunded" -> "$paid refunded"
+        "forfeited" -> "$paid not refunded (late cancel / no-show)"
+        "failed" -> "Payment not completed"
+        else -> null
+    }
 }

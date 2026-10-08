@@ -666,6 +666,70 @@ class SupabaseClient(context: Context) {
         }
     }
 
+    /**
+     * Creates a booking that is paid online. The slot is held for 15 minutes (status pending_payment)
+     * until the payment is verified. [paymentOption] is "advance" (20%) or "full".
+     */
+    suspend fun createBookingWithPaymentRpc(
+        staffId: String?, serviceId: String, start: String, paymentOption: String, notes: String
+    ): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            val cleanStaffId = staffId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
+            val payload = JSONObject()
+                .put("p_service_id", serviceId)
+                .put("p_start", start)
+                .put("p_payment_option", paymentOption)
+                .put("p_notes", notes)
+            val rpc = if (cleanStaffId == null) "create_booking_any_stylist_with_payment" else {
+                payload.put("p_staff_id", cleanStaffId)
+                "create_booking_with_payment"
+            }
+            val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/$rpc", "POST", payload.toString())
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: "{}"
+                if (response.isSuccessful) Result.success(parseIdResponse(body))
+                else Result.failure(Exception(extractErrorMessage(response.code, body)))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception("No internet connection. Please try again."))
+        }
+    }
+
+    /** Calls one of our Edge Functions as the signed-in user. Errors come back as {"error": "..."}. */
+    suspend fun invokeFunction(name: String, payload: JSONObject): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            val request = buildRequest("$DEFAULT_BASE_URL/functions/v1/$name", "POST", payload.toString())
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: "{}"
+                val json = try { JSONObject(body) } catch (e: Exception) { JSONObject() }
+                if (response.isSuccessful) {
+                    Result.success(json)
+                } else {
+                    val msg = json.optString("error").takeIf { it.isNotBlank() && it != "null" }
+                        ?: if (response.code == 401) "Please log in again." else "Server is busy. Please try again."
+                    Result.failure(Exception(msg))
+                }
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception("No internet connection. Please try again."))
+        }
+    }
+
+    /** What the customer gets back if they cancel now: {refund_amount, kept_amount, message}. */
+    suspend fun getCancellationTermsRpc(bookingId: String): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            val payload = JSONObject().put("p_booking_id", bookingId)
+            val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/get_cancellation_terms", "POST", payload.toString(), singleObject = true)
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: "{}"
+                if (response.isSuccessful) Result.success(JSONObject(body))
+                else Result.failure(Exception(extractErrorMessage(response.code, body)))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception("No internet connection. Please try again."))
+        }
+    }
+
     // Live Booking Status RPC
     suspend fun getMyBookingStatusRpc(bookingId: String): Result<JSONObject> = withContext(Dispatchers.IO) {
         try {
@@ -731,7 +795,7 @@ class SupabaseClient(context: Context) {
     // Customer Bookings REST table
     suspend fun getCustomerBookings(customerId: String): Result<JSONArray> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?select=id,salon_id,service_id,staff_id,status,start_time,end_time,price,notes,salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration_minutes,price)&customer_id=eq.$customerId&order=start_time.desc"
+            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?select=id,salon_id,service_id,staff_id,status,start_time,end_time,price,notes,payment_option,payment_status,amount_due,amount_paid,hold_expires_at,salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration_minutes,price)&customer_id=eq.$customerId&order=start_time.desc"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"
@@ -748,7 +812,7 @@ class SupabaseClient(context: Context) {
     // Single Booking details
     suspend fun getSingleBooking(bookingId: String): Result<JSONObject> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?id=eq.$bookingId&select=id,salon_id,service_id,staff_id,status,start_time,end_time,price,notes,salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration_minutes,price)"
+            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?id=eq.$bookingId&select=id,salon_id,service_id,staff_id,status,start_time,end_time,price,notes,payment_option,payment_status,amount_due,amount_paid,hold_expires_at,salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration_minutes,price)"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"

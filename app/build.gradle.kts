@@ -109,6 +109,8 @@ dependencies {
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.okhttp)
+  // Razorpay Checkout (online booking payments). Orders are created and verified server-side.
+  implementation("com.razorpay:checkout:1.6.41")
   // implementation(libs.play.services.location)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)

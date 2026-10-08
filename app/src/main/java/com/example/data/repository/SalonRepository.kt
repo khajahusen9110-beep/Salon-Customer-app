@@ -543,15 +543,12 @@ class SalonRepository(private val context: Context) {
         stylistName: String,
         dateFormatted: String,
         timeSlot: TimeSlot,
-        notes: String
+        notes: String,
+        paymentOption: String = "advance"
     ): Result<BookingItem> {
         val cleanStaffId = staffId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
         val startIso = timeSlot.slotStart
-        val rpcRes = if (cleanStaffId == null) {
-            supabaseClient.createBookingAnyStylistRpc(service.id, startIso, notes)
-        } else {
-            supabaseClient.createBookingRpc(cleanStaffId, service.id, startIso, notes)
-        }
+        val rpcRes = supabaseClient.createBookingWithPaymentRpc(cleanStaffId, service.id, startIso, paymentOption, notes)
 
         if (rpcRes.isFailure) {
             val ex = rpcRes.exceptionOrNull()
@@ -579,14 +576,60 @@ class SalonRepository(private val context: Context) {
             date = dateFormatted,
             timeSlot = timeSlot.displayTime,
             startTimeIso = startIso,
-            status = resJson?.optString("status", "confirmed") ?: "confirmed",
+            status = "pending_payment",
             queuePosition = 1,
             waitMinutes = 0,
-            notes = notes
+            notes = notes,
+            paymentOption = paymentOption,
+            paymentStatus = "pending"
         )
 
         addBooking(newBooking)
         return Result.success(newBooking)
+    }
+
+    /** Creates (or reuses) the Razorpay order for a booking that is holding its slot for payment. */
+    suspend fun createPaymentOrder(bookingId: String): Result<PaymentOrder> {
+        val res = supabaseClient.invokeFunction("create-payment-order", JSONObject().put("booking_id", bookingId))
+        val o = res.getOrElse { return Result.failure(it) }
+        val prefill = o.optJSONObject("prefill")
+        return Result.success(
+            PaymentOrder(
+                bookingId = o.optString("booking_id", bookingId),
+                orderId = o.optString("order_id"),
+                amountPaise = o.optInt("amount_paise"),
+                currency = o.optString("currency", "INR"),
+                keyId = o.optString("key_id"),
+                salonName = o.optString("salon_name"),
+                holdExpiresAt = o.optString("hold_expires_at"),
+                prefillName = prefill?.optString("name").orEmpty(),
+                prefillContact = prefill?.optString("contact").orEmpty(),
+                prefillEmail = prefill?.optString("email").orEmpty()
+            )
+        )
+    }
+
+    /**
+     * Sends Razorpay Checkout's result to the server, which checks the signature and the payment
+     * with Razorpay before confirming the booking. Returns the booking status ("confirmed" normally).
+     */
+    suspend fun verifyPayment(orderId: String, paymentId: String, signature: String): Result<String> {
+        val res = supabaseClient.invokeFunction(
+            "verify-payment",
+            JSONObject().put("razorpay_order_id", orderId).put("razorpay_payment_id", paymentId).put("razorpay_signature", signature)
+        )
+        return res.map { it.optString("booking_status", "pending_payment") }
+    }
+
+    /** Refund preview shown before the customer confirms a cancellation. */
+    suspend fun getCancellationTerms(bookingId: String): Result<CancellationTerms> =
+        supabaseClient.getCancellationTermsRpc(bookingId).map {
+            CancellationTerms(it.optDouble("refund_amount", 0.0), it.optDouble("kept_amount", 0.0), it.optString("message"))
+        }
+
+    /** Asks the server to send a refund right away (the 5-minute job would do it anyway). */
+    suspend fun requestRefundNow(bookingId: String) {
+        supabaseClient.invokeFunction("process-refunds", JSONObject().put("booking_id", bookingId))
     }
 
     suspend fun getMyBookingStatus(bookingId: String): BookingLiveStatus {
@@ -706,6 +749,7 @@ class SalonRepository(private val context: Context) {
             } else item
         }
         _bookings.value = list
+        requestRefundNow(bookingId) // no-op unless the cancel made a refund due
         return Result.success(Unit)
     }
 
@@ -1019,7 +1063,11 @@ class SalonRepository(private val context: Context) {
             waitMinutes = 0,
             delayMinutes = 0,
             peopleAhead = 0,
-            notes = json.optString("notes", "")
+            notes = json.optString("notes", ""),
+            paymentOption = json.optString("payment_option", "pay_at_salon"),
+            paymentStatus = json.optString("payment_status", "not_required"),
+            amountDue = json.optDouble("amount_due", 0.0),
+            amountPaid = json.optDouble("amount_paid", 0.0)
         )
     }
 }

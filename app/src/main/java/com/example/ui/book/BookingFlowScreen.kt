@@ -32,6 +32,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.model.*
+import com.example.data.payment.PaymentResult
+import com.example.data.payment.RazorpayPayments
 import com.example.data.repository.AuthRepository
 import com.example.data.repository.SalonRepository
 import com.example.ui.common.AppStrings
@@ -81,6 +83,11 @@ fun BookingFlowScreen(
     var inlineErrorMessage by remember { mutableStateOf<String?>(null) }
     var showServicePickerSheet by remember { mutableStateOf(false) }
     var isLoadingInitial by remember { mutableStateOf(true) }
+
+    // Step F: online payment (20% advance or full). The slot is held while the customer pays.
+    var paymentOption by remember { mutableStateOf("advance") }
+    var payingBookingId by remember { mutableStateOf<String?>(null) }
+    var paymentStage by remember { mutableStateOf<String?>(null) } // status text while paying
 
     // Load Initial Salon and Service Data
     LaunchedEffect(salonId) {
@@ -147,6 +154,10 @@ fun BookingFlowScreen(
         }
     }
 
+    fun releaseHeldSlot(bookingId: String) {
+        scope.launch { salonRepo.cancelBooking(bookingId) }
+    }
+
     fun refreshSlotsAfterConflict() {
         val srv = selectedService ?: return
         val day = selectedDay ?: return
@@ -156,6 +167,33 @@ fun BookingFlowScreen(
             val cleanStaff = selectedStaffId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
             availableSlots = salonRepo.getAvailableSlots(srv.id, cleanStaff, day.dateString)
             isLoadingSlots = false
+        }
+    }
+
+    // Razorpay reports back through MainActivity -> RazorpayPayments.results.
+    LaunchedEffect(Unit) {
+        RazorpayPayments.results.collect { result ->
+            val bookingId = payingBookingId ?: return@collect
+            when (result) {
+                is PaymentResult.Success -> {
+                    paymentStage = "Confirming your payment…"
+                    val verified = salonRepo.verifyPayment(result.orderId, result.paymentId, result.signature)
+                    paymentStage = null
+                    isSubmitting = false
+                    payingBookingId = null
+                    // Even if this check fails (network), Razorpay's webhook confirms the booking or refunds it.
+                    verified.onFailure { android.util.Log.w("Payment", "verify failed: ${it.message}") }
+                    onBookingConfirmed(bookingId)
+                }
+                is PaymentResult.Failed -> {
+                    releaseHeldSlot(bookingId)
+                    payingBookingId = null
+                    paymentStage = null
+                    isSubmitting = false
+                    inlineErrorMessage = result.message + " The slot was released — you can pick a time again."
+                    refreshSlotsAfterConflict()
+                }
+            }
         }
     }
 
@@ -231,7 +269,14 @@ fun BookingFlowScreen(
                                 color = Slate500
                             )
                         }
-                        if (selectedDay != null && selectedSlot != null) {
+                        if (paymentStage != null) {
+                            Text(
+                                text = paymentStage ?: "",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = GoldPrimary
+                            )
+                        } else if (selectedDay != null && selectedSlot != null) {
                             Text(
                                 text = "${selectedDay?.dayName} at ${selectedSlot?.displayTime}",
                                 fontSize = 11.sp,
@@ -257,7 +302,9 @@ fun BookingFlowScreen(
                             val chosenStylist = staffList.find { it.id == cleanStaff }
                             val stylistName = chosenStylist?.name ?: "Any Stylist (Fastest Available)"
 
+                            val activity = context.findActivity()
                             scope.launch {
+                                paymentStage = "Holding your slot…"
                                 val result = salonRepo.createBooking(
                                     salonId = currentSalon.id,
                                     salonName = currentSalon.name,
@@ -267,18 +314,36 @@ fun BookingFlowScreen(
                                     stylistName = stylistName,
                                     dateFormatted = "${selectedDay?.dayName}, ${selectedDay?.dayNumber}",
                                     timeSlot = selectedSlot!!,
-                                    notes = notes.trim()
+                                    notes = notes.trim(),
+                                    paymentOption = paymentOption
                                 )
-
-                                isSubmitting = false
-                                if (result.isSuccess) {
-                                    val booking = result.getOrNull()!!
-                                    onBookingConfirmed(booking.id)
-                                } else {
-                                    inlineErrorMessage = result.exceptionOrNull()?.message
-                                        ?: "Slot just got booked, please pick another"
+                                val booking = result.getOrElse {
+                                    paymentStage = null
+                                    isSubmitting = false
+                                    inlineErrorMessage = it.message ?: "Slot just got booked, please pick another"
                                     refreshSlotsAfterConflict()
+                                    return@launch
                                 }
+
+                                paymentStage = "Opening payment…"
+                                val order = salonRepo.createPaymentOrder(booking.id).getOrElse {
+                                    releaseHeldSlot(booking.id)
+                                    paymentStage = null
+                                    isSubmitting = false
+                                    inlineErrorMessage = it.message ?: "Could not start the payment. Please try again."
+                                    return@launch
+                                }
+                                if (activity == null) {
+                                    releaseHeldSlot(booking.id)
+                                    paymentStage = null
+                                    isSubmitting = false
+                                    inlineErrorMessage = "Could not open the payment screen. Please try again."
+                                    return@launch
+                                }
+                                payingBookingId = booking.id
+                                paymentStage = "Waiting for payment…"
+                                val what = if (paymentOption == "full") "Full payment" else "20% advance"
+                                RazorpayPayments.open(activity, order, "$what • ${currentService.name}", holdSecondsLeft = 14 * 60)
                             }
                         },
                         enabled = !isSubmitting && selectedSlot != null && !isComboSelected,
@@ -295,7 +360,7 @@ fun BookingFlowScreen(
                             CircularProgressIndicator(color = GoldAccent, modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
                         } else {
                             Text(
-                                text = "Confirm Booking",
+                                text = "Pay ₹${payNowAmount(currentService?.price ?: 0.0, paymentOption).toInt()} & Book",
                                 fontWeight = FontWeight.Bold,
                                 color = if (selectedSlot != null && !isComboSelected) Color.White else Slate500
                             )
@@ -842,6 +907,42 @@ fun BookingFlowScreen(
                 }
             }
 
+            // Step F — How to pay (online, held for 15 minutes until paid)
+            if (currentService != null && !isComboSelected) {
+                val price = currentService.price
+                val advance = payNowAmount(price, "advance")
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    modifier = Modifier.fillMaxWidth().testTag("step_payment_card"),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("PAYMENT", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Slate500, letterSpacing = 1.sp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        PaymentOptionRow(
+                            selected = paymentOption == "advance",
+                            title = "Pay 20% advance now — ₹${advance.toInt()}",
+                            subtitle = "Pay the remaining ₹${(price - advance).toInt()} at the salon",
+                            tag = "pay_option_advance"
+                        ) { paymentOption = "advance" }
+                        PaymentOptionRow(
+                            selected = paymentOption == "full",
+                            title = "Pay full amount now — ₹${price.toInt()}",
+                            subtitle = "Nothing to pay at the salon",
+                            tag = "pay_option_full"
+                        ) { paymentOption = "full" }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Free cancellation up to 2 hours before your appointment (full refund). " +
+                                "Cancelling later or not showing up: the amount paid is not refunded.",
+                            fontSize = 11.sp,
+                            color = Slate500
+                        )
+                    }
+                }
+            }
+
             // Step 5: Optional Notes Field
             Card(
                 shape = RoundedCornerShape(16.dp),
@@ -1015,6 +1116,38 @@ fun FlowTimeSlotRow(
                     }
                 }
             }
+        }
+    }
+}
+
+/** Amount charged online now; the server computes the same (20% advance rounded up, or the full price). */
+private fun payNowAmount(price: Double, option: String): Double =
+    if (option == "full") price else kotlin.math.max(1.0, kotlin.math.ceil(price * 20 / 100.0))
+
+private fun android.content.Context.findActivity(): android.app.Activity? {
+    var ctx: android.content.Context? = this
+    while (ctx is android.content.ContextWrapper) {
+        if (ctx is android.app.Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
+}
+
+@Composable
+private fun PaymentOptionRow(selected: Boolean, title: String, subtitle: String, tag: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 6.dp)
+            .testTag(tag),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = onClick, colors = RadioButtonDefaults.colors(selectedColor = GoldPrimary))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+            Text(subtitle, fontSize = 12.sp, color = Slate500)
         }
     }
 }
