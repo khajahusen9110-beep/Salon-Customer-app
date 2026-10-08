@@ -47,6 +47,8 @@ fun DiscoverScreen(
 
     var salons by remember { mutableStateOf<List<Salon>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var reloadKey by remember { mutableStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedCity by remember { mutableStateOf("All Cities") }
     var cityMenuExpanded by remember { mutableStateOf(false) }
@@ -58,9 +60,11 @@ fun DiscoverScreen(
         listOf("All Cities") + uniqueCities
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(reloadKey) {
         isLoading = true
-        salons = salonRepo.getSalons()
+        val res = salonRepo.loadSalons()
+        res.onSuccess { salons = it; loadError = null }
+        res.onFailure { loadError = it.message }
         isLoading = false
     }
 
@@ -329,6 +333,36 @@ fun DiscoverScreen(
         if (isLoading) {
             Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = GoldPrimary)
+            }
+        } else if (loadError != null && salons.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = Icons.Default.CloudOff,
+                        contentDescription = null,
+                        tint = Slate400,
+                        modifier = Modifier.size(54.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = loadError ?: "",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Slate500,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { reloadKey++ },
+                        colors = ButtonDefaults.buttonColors(containerColor = GoldPrimary),
+                        modifier = Modifier.testTag("discover_retry")
+                    ) { Text("Retry") }
+                }
             }
         } else if (filteredSalons.isEmpty()) {
             Box(

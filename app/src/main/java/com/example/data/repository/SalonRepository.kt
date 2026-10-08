@@ -84,6 +84,14 @@ class SalonRepository(private val context: Context) {
         }
     }
 
+    /** Like [getSalons] but tells a network/server failure apart from "no salons". */
+    suspend fun loadSalons(): Result<List<Salon>> {
+        val result = supabaseClient.getSalons()
+        val arr = result.getOrNull()
+            ?: return Result.failure(Exception("Couldn't load salons. Check your internet connection and try again."))
+        return Result.success((0 until arr.length()).map { parseSalon(arr.getJSONObject(it)) })
+    }
+
     suspend fun getSalons(): List<Salon> {
         val result = supabaseClient.getSalons()
         if (result.isSuccess) {
