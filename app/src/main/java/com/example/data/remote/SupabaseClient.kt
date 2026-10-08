@@ -148,7 +148,8 @@ class SupabaseClient(context: Context) {
     ): Request {
         val builder = Request.Builder().url(url)
         val key = anonKey
-        val token = if (url.contains("/auth/v1/token") || url.contains("/auth/v1/signup")) null else validAccessToken()
+        val token = if (url.contains("/auth/v1/token") || url.contains("/auth/v1/signup") ||
+            url.contains("/auth/v1/otp") || url.contains("/auth/v1/verify")) null else validAccessToken()
         builder.addHeader("apikey", key)
         builder.addHeader("Authorization", "Bearer ${token ?: key}")
         builder.addHeader("Content-Type", "application/json")
@@ -167,65 +168,57 @@ class SupabaseClient(context: Context) {
         return builder.build()
     }
 
-    suspend fun signUp(email: String, password: String, fullName: String): Result<JSONObject> =
-        withContext(Dispatchers.IO) {
-            try {
-                val url = "$DEFAULT_BASE_URL/auth/v1/signup"
-                val payload = JSONObject().apply {
-                    put("email", email)
-                    put("password", password)
-                    put("data", JSONObject().apply {
-                        put("full_name", fullName)
-                        put("role", "customer")
-                    })
-                }
-                val request = buildRequest(url, "POST", payload.toString())
-                val response = httpClient.newCall(request).execute()
-                val responseBody = response.body?.string() ?: ""
-                if (response.isSuccessful) {
-                    val json = JSONObject(responseBody)
-                    val user = json.optJSONObject("user")
-                    val id = user?.optString("id") ?: ""
-                    saveSession(json)
-                    if (id.isNotEmpty()) currentUserId = id
-                    currentUserEmail = email
-                    Result.success(json)
-                } else {
-                    Result.failure(Exception(extractErrorMessage(response.code, responseBody)))
-                }
-            } catch (e: Exception) {
-                Log.w("SupabaseClient", "signUp error: ${e.message}")
-                Result.failure(e)
+    /** Sends a login OTP by SMS. [phone] is in E.164 form, e.g. +919876543210. */
+    suspend fun sendPhoneOtp(phone: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val payload = JSONObject().put("phone", phone).put("create_user", true)
+            val request = buildRequest("$DEFAULT_BASE_URL/auth/v1/otp", "POST", payload.toString())
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful) Result.success(Unit)
+                else Result.failure(Exception(otpErrorMessage(response.code, body)))
             }
+        } catch (e: Exception) {
+            Result.failure(Exception("No internet connection. Please try again."))
         }
+    }
 
-    suspend fun signIn(email: String, password: String): Result<JSONObject> =
-        withContext(Dispatchers.IO) {
-            try {
-                val url = "$DEFAULT_BASE_URL/auth/v1/token?grant_type=password"
-                val payload = JSONObject().apply {
-                    put("email", email)
-                    put("password", password)
-                }
-                val request = buildRequest(url, "POST", payload.toString())
-                val response = httpClient.newCall(request).execute()
-                val responseBody = response.body?.string() ?: ""
+    /** Verifies the SMS code and stores the session. Returns the GoTrue session JSON. */
+    suspend fun verifyPhoneOtp(phone: String, code: String): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            val payload = JSONObject().put("type", "sms").put("phone", phone).put("token", code)
+            val request = buildRequest("$DEFAULT_BASE_URL/auth/v1/verify", "POST", payload.toString())
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: ""
                 if (response.isSuccessful) {
-                    val json = JSONObject(responseBody)
-                    val user = json.optJSONObject("user")
-                    val id = user?.optString("id") ?: ""
+                    val json = JSONObject(body)
                     saveSession(json)
-                    currentUserId = id
-                    currentUserEmail = email
+                    currentUserId = json.optJSONObject("user")?.optString("id")
+                    currentUserEmail = ""
                     Result.success(json)
                 } else {
-                    Result.failure(Exception(extractErrorMessage(response.code, responseBody)))
+                    Result.failure(Exception(otpErrorMessage(response.code, body)))
                 }
-            } catch (e: Exception) {
-                Log.w("SupabaseClient", "signIn error: ${e.message}")
-                Result.failure(e)
             }
+        } catch (e: Exception) {
+            Result.failure(Exception("No internet connection. Please try again."))
         }
+    }
+
+    private fun otpErrorMessage(code: Int, body: String): String {
+        val lower = body.lowercase()
+        return when {
+            lower.contains("expired") || (lower.contains("invalid") && lower.contains("token")) ->
+                "Wrong or expired OTP. Please check the code or request a new one."
+            lower.contains("only request this after") || lower.contains("rate limit") || code == 429 ->
+                "Please wait a minute before asking for another OTP."
+            lower.contains("phone") && (lower.contains("disabled") || lower.contains("provider")) ->
+                "Mobile login is not available right now. Please try again later."
+            lower.contains("sms") || lower.contains("hook") ->
+                "Could not send the OTP SMS. Please try again."
+            else -> extractErrorMessage(code, body)
+        }
+    }
 
     suspend fun getProfile(userId: String): Result<JSONObject> = withContext(Dispatchers.IO) {
         try {
@@ -325,6 +318,40 @@ class SupabaseClient(context: Context) {
                 Result.success(JSONArray(body))
             } else {
                 Result.failure(Exception("Fetch salons failed: ${response.code}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Salons within [radiusKm] of the point (plus same-city salons without a map pin), nearest first. */
+    suspend fun getNearbySalons(lat: Double?, lng: Double?, city: String?, radiusKm: Double = 25.0): Result<JSONArray> =
+        withContext(Dispatchers.IO) {
+            try {
+                val payload = JSONObject()
+                    .put("p_lat", lat ?: JSONObject.NULL)
+                    .put("p_lng", lng ?: JSONObject.NULL)
+                    .put("p_radius_km", radiusKm)
+                    .put("p_city", city?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/get_nearby_salons", "POST", payload.toString())
+                httpClient.newCall(request).execute().use { response ->
+                    val body = response.body?.string() ?: "[]"
+                    if (response.isSuccessful) Result.success(JSONArray(body))
+                    else Result.failure(Exception(extractErrorMessage(response.code, body)))
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
+    /** Cities that have at least one live salon: [{city, salon_count}]. */
+    suspend fun listCities(): Result<JSONArray> = withContext(Dispatchers.IO) {
+        try {
+            val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/list_cities", "POST", "{}")
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: "[]"
+                if (response.isSuccessful) Result.success(JSONArray(body))
+                else Result.failure(Exception(extractErrorMessage(response.code, body)))
             }
         } catch (e: Exception) {
             Result.failure(e)

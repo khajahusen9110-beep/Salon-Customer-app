@@ -9,6 +9,13 @@ data class UserProfile(
     val language: String = "en"
 )
 
+/** Where the customer is looking for salons: a city, plus the GPS point when location was allowed. */
+data class UserLocation(
+    val city: String,
+    val latitude: Double? = null,
+    val longitude: Double? = null
+)
+
 data class Salon(
     val id: String,
     val name: String,
@@ -26,7 +33,8 @@ data class Salon(
     val isActive: Boolean = true,
     val latitude: Double? = null,
     val longitude: Double? = null,
-    val bookingWindowDays: Int = 14
+    val bookingWindowDays: Int = 14,
+    val distanceKm: Double? = null
 ) {
     val coverPhotoUrl: String
         get() = if (photos.isNotEmpty() && coverPhotoIndex in photos.indices) {

@@ -92,6 +92,23 @@ class SalonRepository(private val context: Context) {
         return Result.success((0 until arr.length()).map { parseSalon(arr.getJSONObject(it)) })
     }
 
+    /** Salons near the customer's location (or in their city), nearest first. */
+    suspend fun loadNearbySalons(location: UserLocation): Result<List<Salon>> {
+        val arr = supabaseClient.getNearbySalons(location.latitude, location.longitude, location.city).getOrNull()
+            ?: return Result.failure(Exception("Couldn't load salons. Check your internet connection and try again."))
+        return Result.success((0 until arr.length()).map { parseSalon(arr.getJSONObject(it)) })
+    }
+
+    /** Cities that have live salons, with how many: used for manual city selection. */
+    suspend fun loadCities(): Result<List<Pair<String, Int>>> {
+        val arr = supabaseClient.listCities().getOrNull()
+            ?: return Result.failure(Exception("Couldn't load cities. Check your internet connection and try again."))
+        return Result.success((0 until arr.length()).map {
+            val o = arr.getJSONObject(it)
+            o.optString("city") to o.optInt("salon_count")
+        }.filter { it.first.isNotBlank() })
+    }
+
     suspend fun getSalons(): List<Salon> {
         val result = supabaseClient.getSalons()
         if (result.isSuccess) {
@@ -957,7 +974,8 @@ class SalonRepository(private val context: Context) {
             isActive = json.optBoolean("is_active", true),
             latitude = lat,
             longitude = lng,
-            bookingWindowDays = json.optInt("booking_window_days", 14)
+            bookingWindowDays = json.optInt("booking_window_days", 14),
+            distanceKm = if (json.has("distance_km") && !json.isNull("distance_km")) json.optDouble("distance_km") else null
         )
     }
 

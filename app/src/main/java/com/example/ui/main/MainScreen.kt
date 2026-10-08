@@ -48,6 +48,7 @@ fun MainApp(
 
     val currentUser by authRepo.currentUser.collectAsState()
     val lang by authRepo.currentLanguage.collectAsState()
+    val location by authRepo.location.collectAsState()
 
     val notificationRepo = remember { NotificationRepository(context, authRepo.supabaseClient) }
     val unreadNotificationsCount by notificationRepo.unreadCount.collectAsState()
@@ -71,6 +72,14 @@ fun MainApp(
         notificationRepo.urgentAlert.collect { alert ->
             activeUrgentAlert = alert
         }
+    }
+
+    // Onboarding: mobile OTP -> name -> city. The app opens only once all three are done.
+    val user = currentUser
+    when {
+        user == null -> { PhoneLoginScreen(authRepo); return }
+        user.fullName.isBlank() -> { NameScreen(authRepo); return }
+        location == null -> { LocationScreen(authRepo, salonRepo); return }
     }
 
     // Determine if bottom navigation should be visible
@@ -154,6 +163,7 @@ fun MainApp(
                         authRepo = authRepo,
                         unreadNotificationsCount = unreadNotificationsCount,
                         onOpenNotifications = { showNotificationsSheet = true },
+                        onChangeLocation = { navController.navigate(Screen.Location.route) },
                         onSalonSelected = { salonId ->
                             navController.navigate(Screen.SalonDetail.createRoute(salonId))
                         }
@@ -193,61 +203,33 @@ fun MainApp(
 
                 // Profile Screen
                 composable(Screen.Profile.route) {
-                    if (currentUser == null) {
-                        LoginScreen(
-                            authRepo = authRepo,
-                            onNavigateToSignup = { navController.navigate(Screen.Signup.route) },
-                            onLoginSuccess = { /* remains on profile */ }
-                        )
-                    } else {
-                        ProfileScreen(
-                            authRepo = authRepo,
-                            salonRepo = salonRepo,
-                            onSignOut = {
-                                navController.navigate(Screen.Discover.route) {
-                                    popUpTo(0)
-                                }
-                            },
-                            onNavigateToFavorites = {
-                                navController.navigate(Screen.Favorites.route)
-                            },
-                            onNavigateToBookings = {
-                                navController.navigate(Screen.Bookings.route)
-                            },
-                            onRebook = { salonId, serviceId, staffId ->
-                                navController.navigate(Screen.BookFlow.createRoute(salonId, serviceId, null, staffId))
-                            }
-                        )
-                    }
-                }
-
-                // Auth: Login Screen
-                composable(Screen.Login.route) {
-                    LoginScreen(
+                    ProfileScreen(
                         authRepo = authRepo,
-                        onNavigateToSignup = { navController.navigate(Screen.Signup.route) },
-                        onLoginSuccess = { navController.popBackStack() }
-                    )
-                }
-
-                // Auth: Signup Screen
-                composable(Screen.Signup.route) {
-                    SignupScreen(
-                        authRepo = authRepo,
-                        onNavigateToLogin = { navController.navigate(Screen.Login.route) },
-                        onSignupSuccess = { navController.navigate(Screen.Onboarding.route) }
-                    )
-                }
-
-                // Onboarding Profile Screen
-                composable(Screen.Onboarding.route) {
-                    OnboardingProfileScreen(
-                        authRepo = authRepo,
-                        onComplete = {
+                        salonRepo = salonRepo,
+                        onSignOut = {
                             navController.navigate(Screen.Discover.route) {
                                 popUpTo(0)
                             }
+                        },
+                        onNavigateToFavorites = {
+                            navController.navigate(Screen.Favorites.route)
+                        },
+                        onNavigateToBookings = {
+                            navController.navigate(Screen.Bookings.route)
+                        },
+                        onRebook = { salonId, serviceId, staffId ->
+                            navController.navigate(Screen.BookFlow.createRoute(salonId, serviceId, null, staffId))
                         }
+                    )
+                }
+
+                // Change city / location (from the Discover header)
+                composable(Screen.Location.route) {
+                    LocationScreen(
+                        authRepo = authRepo,
+                        salonRepo = salonRepo,
+                        onBack = { navController.popBackStack() },
+                        onDone = { navController.popBackStack() }
                     )
                 }
 
@@ -342,7 +324,7 @@ fun MainApp(
             if (showNotificationsSheet) {
                 NotificationsBottomSheet(
                     notificationRepo = notificationRepo,
-                    userId = currentUser?.id ?: "cust_1",
+                    userId = user.id,
                     onDismiss = { showNotificationsSheet = false },
                     onNavigateToBooking = { bId ->
                         showNotificationsSheet = false
