@@ -10,7 +10,7 @@ object AppStrings {
             "tab_profile" -> if (isHi) "प्रोफ़ाइल" else "Profile"
 
             "hero_tagline" -> if (isHi) "इंतज़ार छोड़ें। तुरंत ग्रूमिंग।" else "Skip the wait. Zero friction grooming."
-            "search_placeholder" -> if (isHi) "सैलून खोजें (उदा. BBLUNT, Truefitt)..." else "Search salons (e.g. BBLUNT, Truefitt)..."
+            "search_placeholder" -> if (isHi) "सैलून का नाम या इलाका खोजें..." else "Search salon name or area..."
             "filter_all" -> if (isHi) "सभी" else "All"
             "filter_men" -> if (isHi) "पुरुष" else "Men"
             "filter_women" -> if (isHi) "महिलाएँ" else "Women"

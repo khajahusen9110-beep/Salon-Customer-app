@@ -9,6 +9,13 @@ data class UserProfile(
     val language: String = "en"
 )
 
+/** Where the customer is looking for salons: a city, plus the GPS point when location was allowed. */
+data class UserLocation(
+    val city: String,
+    val latitude: Double? = null,
+    val longitude: Double? = null
+)
+
 data class Salon(
     val id: String,
     val name: String,
@@ -26,7 +33,8 @@ data class Salon(
     val isActive: Boolean = true,
     val latitude: Double? = null,
     val longitude: Double? = null,
-    val bookingWindowDays: Int = 14
+    val bookingWindowDays: Int = 14,
+    val distanceKm: Double? = null
 ) {
     val coverPhotoUrl: String
         get() = if (photos.isNotEmpty() && coverPhotoIndex in photos.indices) {
@@ -156,8 +164,29 @@ data class BookingItem(
     val isReviewed: Boolean = false,
     val userRating: Int = 0,
     val reviewComment: String = "",
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val paymentOption: String = "pay_at_salon", // "pay_at_salon", "advance", "full"
+    val paymentStatus: String = "not_required", // "not_required", "pending", "paid", "refund_pending", "refunded", "forfeited", "failed"
+    val amountDue: Double = 0.0,
+    val amountPaid: Double = 0.0
 )
+
+/** Razorpay order returned by the create-payment-order Edge Function. */
+data class PaymentOrder(
+    val bookingId: String,
+    val orderId: String,
+    val amountPaise: Int,
+    val currency: String,
+    val keyId: String,
+    val salonName: String,
+    val holdExpiresAt: String,
+    val prefillName: String,
+    val prefillContact: String,
+    val prefillEmail: String
+)
+
+/** What a cancellation would refund right now (from get_cancellation_terms). */
+data class CancellationTerms(val refundAmount: Double, val keptAmount: Double, val message: String)
 
 data class BookingLiveStatus(
     val bookingId: String,

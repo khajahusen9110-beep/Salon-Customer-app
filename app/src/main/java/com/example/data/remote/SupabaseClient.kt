@@ -24,6 +24,12 @@ class SupabaseClient(context: Context) {
         private const val PREF_ACCESS_TOKEN = "supabase_access_token"
         private const val PREF_USER_ID = "supabase_user_id"
         private const val PREF_USER_EMAIL = "supabase_user_email"
+        private const val PREF_REFRESH_TOKEN = "supabase_refresh_token"
+        private const val PREF_EXPIRES_AT = "supabase_expires_at"
+
+        // Several SupabaseClient instances share the same SharedPreferences; serialize refreshes so a
+        // refresh token is never spent twice.
+        private val refreshLock = Any()
     }
 
     private val httpClient = OkHttpClient.Builder()
@@ -62,8 +68,72 @@ class SupabaseClient(context: Context) {
         get() = prefs.getString(PREF_USER_EMAIL, null)
         set(value) = prefs.edit().putString(PREF_USER_EMAIL, value).apply()
 
+    // Sessions saved by older builds have no refresh token and cannot be renewed; treat them as signed out.
+    val hasSession: Boolean
+        get() = !accessToken.isNullOrBlank() && !prefs.getString(PREF_REFRESH_TOKEN, null).isNullOrBlank()
+
+    private fun saveSession(json: JSONObject) {
+        val token = json.optString("access_token")
+        if (token.isEmpty()) return
+        val expiresAt = json.optLong("expires_at", 0L).takeIf { it > 0 }
+            ?: (System.currentTimeMillis() / 1000 + json.optLong("expires_in", 3600L))
+        prefs.edit()
+            .putString(PREF_ACCESS_TOKEN, token)
+            .putString(PREF_REFRESH_TOKEN, json.optString("refresh_token"))
+            .putLong(PREF_EXPIRES_AT, expiresAt)
+            .apply()
+    }
+
+    /**
+     * Returns an access token that is valid for at least another minute, refreshing it with the
+     * stored refresh token when needed. Returns null (and clears the session) when the session has
+     * been revoked or expired, so callers fall back to anonymous access and the UI asks for login.
+     */
+    private fun validAccessToken(): String? {
+        synchronized(refreshLock) {
+            return refreshIfNeeded()
+        }
+    }
+
+    private fun refreshIfNeeded(): String? {
+        val token = accessToken ?: return null
+        val expiresAt = prefs.getLong(PREF_EXPIRES_AT, 0L)
+        val now = System.currentTimeMillis() / 1000
+        if (expiresAt == 0L || expiresAt - 60 > now) return token
+        val refresh = prefs.getString(PREF_REFRESH_TOKEN, null)
+        if (refresh.isNullOrBlank()) return token
+        return try {
+            val body = JSONObject().put("refresh_token", refresh).toString()
+                .toRequestBody("application/json; charset=utf-8".toMediaType())
+            val request = Request.Builder()
+                .url("$DEFAULT_BASE_URL/auth/v1/token?grant_type=refresh_token")
+                .addHeader("apikey", anonKey)
+                .post(body)
+                .build()
+            httpClient.newCall(request).execute().use { response ->
+                val text = response.body?.string() ?: ""
+                when {
+                    response.isSuccessful -> {
+                        saveSession(JSONObject(text))
+                        accessToken
+                    }
+                    response.code in 400..401 -> {
+                        clearSession()
+                        null
+                    }
+                    else -> token
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("SupabaseClient", "token refresh failed: ${e.message}")
+            token
+        }
+    }
+
     fun clearSession() {
         prefs.edit()
+            .remove(PREF_REFRESH_TOKEN)
+            .remove(PREF_EXPIRES_AT)
             .remove(PREF_ACCESS_TOKEN)
             .remove(PREF_USER_ID)
             .remove(PREF_USER_EMAIL)
@@ -73,19 +143,18 @@ class SupabaseClient(context: Context) {
     private fun buildRequest(
         url: String,
         method: String = "GET",
-        jsonBody: String? = null
+        jsonBody: String? = null,
+        singleObject: Boolean = false
     ): Request {
         val builder = Request.Builder().url(url)
         val key = anonKey
-        if (key.isNotBlank()) {
-            builder.addHeader("apikey", key)
-            val token = accessToken ?: key
-            builder.addHeader("Authorization", "Bearer $token")
-        } else if (!accessToken.isNullOrBlank()) {
-            builder.addHeader("Authorization", "Bearer $accessToken")
-        }
+        val token = if (url.contains("/auth/v1/token") || url.contains("/auth/v1/signup") ||
+            url.contains("/auth/v1/otp") || url.contains("/auth/v1/verify")) null else validAccessToken()
+        builder.addHeader("apikey", key)
+        builder.addHeader("Authorization", "Bearer ${token ?: key}")
         builder.addHeader("Content-Type", "application/json")
-        builder.addHeader("Accept", "application/json")
+        // PostgREST returns set-returning RPCs as arrays; ask for a single JSON object where we expect one.
+        builder.addHeader("Accept", if (singleObject) "application/vnd.pgrst.object+json" else "application/json")
 
         if (jsonBody != null) {
             val body = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -99,71 +168,61 @@ class SupabaseClient(context: Context) {
         return builder.build()
     }
 
-    suspend fun signUp(email: String, password: String, fullName: String): Result<JSONObject> =
-        withContext(Dispatchers.IO) {
-            try {
-                val url = "$DEFAULT_BASE_URL/auth/v1/signup"
-                val payload = JSONObject().apply {
-                    put("email", email)
-                    put("password", password)
-                    put("data", JSONObject().apply {
-                        put("full_name", fullName)
-                        put("role", "customer")
-                    })
-                }
-                val request = buildRequest(url, "POST", payload.toString())
-                val response = httpClient.newCall(request).execute()
-                val responseBody = response.body?.string() ?: ""
-                if (response.isSuccessful) {
-                    val json = JSONObject(responseBody)
-                    val user = json.optJSONObject("user")
-                    val id = user?.optString("id") ?: ""
-                    val token = json.optString("access_token")
-                    if (token.isNotEmpty()) accessToken = token
-                    if (id.isNotEmpty()) currentUserId = id
-                    currentUserEmail = email
-                    Result.success(json)
-                } else {
-                    Result.failure(Exception(extractErrorMessage(response.code, responseBody)))
-                }
-            } catch (e: Exception) {
-                Log.w("SupabaseClient", "signUp error: ${e.message}")
-                Result.failure(e)
+    /** Sends a login OTP by SMS. [phone] is in E.164 form, e.g. +919876543210. */
+    suspend fun sendPhoneOtp(phone: String): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val payload = JSONObject().put("phone", phone).put("create_user", true)
+            val request = buildRequest("$DEFAULT_BASE_URL/auth/v1/otp", "POST", payload.toString())
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: ""
+                if (response.isSuccessful) Result.success(Unit)
+                else Result.failure(Exception(otpErrorMessage(response.code, body)))
             }
+        } catch (e: Exception) {
+            Result.failure(Exception("No internet connection. Please try again."))
         }
+    }
 
-    suspend fun signIn(email: String, password: String): Result<JSONObject> =
-        withContext(Dispatchers.IO) {
-            try {
-                val url = "$DEFAULT_BASE_URL/auth/v1/token?grant_type=password"
-                val payload = JSONObject().apply {
-                    put("email", email)
-                    put("password", password)
-                }
-                val request = buildRequest(url, "POST", payload.toString())
-                val response = httpClient.newCall(request).execute()
-                val responseBody = response.body?.string() ?: ""
+    /** Verifies the SMS code and stores the session. Returns the GoTrue session JSON. */
+    suspend fun verifyPhoneOtp(phone: String, code: String): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            val payload = JSONObject().put("type", "sms").put("phone", phone).put("token", code)
+            val request = buildRequest("$DEFAULT_BASE_URL/auth/v1/verify", "POST", payload.toString())
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: ""
                 if (response.isSuccessful) {
-                    val json = JSONObject(responseBody)
-                    val user = json.optJSONObject("user")
-                    val id = user?.optString("id") ?: ""
-                    val token = json.optString("access_token")
-                    accessToken = token
-                    currentUserId = id
-                    currentUserEmail = email
+                    val json = JSONObject(body)
+                    saveSession(json)
+                    currentUserId = json.optJSONObject("user")?.optString("id")
+                    currentUserEmail = ""
                     Result.success(json)
                 } else {
-                    Result.failure(Exception(extractErrorMessage(response.code, responseBody)))
+                    Result.failure(Exception(otpErrorMessage(response.code, body)))
                 }
-            } catch (e: Exception) {
-                Log.w("SupabaseClient", "signIn error: ${e.message}")
-                Result.failure(e)
             }
+        } catch (e: Exception) {
+            Result.failure(Exception("No internet connection. Please try again."))
         }
+    }
+
+    private fun otpErrorMessage(code: Int, body: String): String {
+        val lower = body.lowercase()
+        return when {
+            lower.contains("expired") || (lower.contains("invalid") && lower.contains("token")) ->
+                "Wrong or expired OTP. Please check the code or request a new one."
+            lower.contains("only request this after") || lower.contains("rate limit") || code == 429 ->
+                "Please wait a minute before asking for another OTP."
+            lower.contains("phone") && (lower.contains("disabled") || lower.contains("provider")) ->
+                "Mobile login is not available right now. Please try again later."
+            lower.contains("sms") || lower.contains("hook") ->
+                "Could not send the OTP SMS. Please try again."
+            else -> extractErrorMessage(code, body)
+        }
+    }
 
     suspend fun getProfile(userId: String): Result<JSONObject> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/profiles?id=eq.$userId&select=id,email,full_name,phone,role,language"
+            val url = "$DEFAULT_BASE_URL/rest/v1/profiles?id=eq.$userId&select=id,full_name,phone,role,language"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"
@@ -231,6 +290,23 @@ class SupabaseClient(context: Context) {
         }
     }
 
+    /** Permanently deletes the signed-in account (Play Store requirement). */
+    suspend fun deleteMyAccount(): Result<Unit> = withContext(Dispatchers.IO) {
+        try {
+            val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/delete_my_account", "POST", "{}")
+            val response = httpClient.newCall(request).execute()
+            val body = response.body?.string() ?: ""
+            if (response.isSuccessful) {
+                clearSession()
+                Result.success(Unit)
+            } else {
+                Result.failure(Exception(extractErrorMessage(response.code, body)))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception("No internet connection. Please try again."))
+        }
+    }
+
     // Salons REST table
     suspend fun getSalons(): Result<JSONArray> = withContext(Dispatchers.IO) {
         try {
@@ -242,6 +318,40 @@ class SupabaseClient(context: Context) {
                 Result.success(JSONArray(body))
             } else {
                 Result.failure(Exception("Fetch salons failed: ${response.code}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Salons within [radiusKm] of the point (plus same-city salons without a map pin), nearest first. */
+    suspend fun getNearbySalons(lat: Double?, lng: Double?, city: String?, radiusKm: Double = 25.0): Result<JSONArray> =
+        withContext(Dispatchers.IO) {
+            try {
+                val payload = JSONObject()
+                    .put("p_lat", lat ?: JSONObject.NULL)
+                    .put("p_lng", lng ?: JSONObject.NULL)
+                    .put("p_radius_km", radiusKm)
+                    .put("p_city", city?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/get_nearby_salons", "POST", payload.toString())
+                httpClient.newCall(request).execute().use { response ->
+                    val body = response.body?.string() ?: "[]"
+                    if (response.isSuccessful) Result.success(JSONArray(body))
+                    else Result.failure(Exception(extractErrorMessage(response.code, body)))
+                }
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
+    /** Cities that have at least one live salon: [{city, salon_count}]. */
+    suspend fun listCities(): Result<JSONArray> = withContext(Dispatchers.IO) {
+        try {
+            val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/list_cities", "POST", "{}")
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: "[]"
+                if (response.isSuccessful) Result.success(JSONArray(body))
+                else Result.failure(Exception(extractErrorMessage(response.code, body)))
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -289,7 +399,11 @@ class SupabaseClient(context: Context) {
     // Services REST table
     suspend fun getServices(salonId: String): Result<JSONArray> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/services?salon_id=eq.$salonId&is_active=eq.true&select=id,salon_id,category_id,name,duration_minutes,price,description,image_url,is_active,is_express,service_categories(id,name)&order=price.asc"
+            // Only services at least one active stylist does (bookable:...!inner drops the rest).
+            val url = "$DEFAULT_BASE_URL/rest/v1/services?salon_id=eq.$salonId&is_active=eq.true" +
+                "&select=id,salon_id,category_id,name,duration_minutes,price,description,image_url,is_active,is_express," +
+                "service_categories(id,name),bookable:staff_services!inner(staff!inner(id))" +
+                "&bookable.staff.is_active=eq.true&order=price.asc"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"
@@ -306,7 +420,7 @@ class SupabaseClient(context: Context) {
     // Combos REST table
     suspend fun getCombos(salonId: String): Result<JSONArray> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/combos?salon_id=eq.$salonId&is_active=eq.true&select=id,salon_id,name,price,is_active,description,combo_services(service_id,services(id,name,duration_minutes))"
+            val url = "$DEFAULT_BASE_URL/rest/v1/combos?salon_id=eq.$salonId&is_active=eq.true&select=id,salon_id,name,price,is_active,combo_services(service_id,services(id,name,duration_minutes))"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"
@@ -520,7 +634,7 @@ class SupabaseClient(context: Context) {
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "{}"
             if (response.isSuccessful) {
-                Result.success(if (body.startsWith("{")) JSONObject(body) else JSONObject())
+                Result.success(parseIdResponse(body))
             } else {
                 Result.failure(Exception(extractErrorMessage(response.code, body)))
             }
@@ -547,12 +661,76 @@ class SupabaseClient(context: Context) {
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "{}"
             if (response.isSuccessful) {
-                Result.success(if (body.startsWith("{")) JSONObject(body) else JSONObject())
+                Result.success(parseIdResponse(body))
             } else {
                 Result.failure(Exception(extractErrorMessage(response.code, body)))
             }
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Creates a booking that is paid online. The slot is held for 15 minutes (status pending_payment)
+     * until the payment is verified. [paymentOption] is "advance" (20%) or "full".
+     */
+    suspend fun createBookingWithPaymentRpc(
+        staffId: String?, serviceId: String, start: String, paymentOption: String, notes: String
+    ): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            val cleanStaffId = staffId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
+            val payload = JSONObject()
+                .put("p_service_id", serviceId)
+                .put("p_start", start)
+                .put("p_payment_option", paymentOption)
+                .put("p_notes", notes)
+            val rpc = if (cleanStaffId == null) "create_booking_any_stylist_with_payment" else {
+                payload.put("p_staff_id", cleanStaffId)
+                "create_booking_with_payment"
+            }
+            val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/$rpc", "POST", payload.toString())
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: "{}"
+                if (response.isSuccessful) Result.success(parseIdResponse(body))
+                else Result.failure(Exception(extractErrorMessage(response.code, body)))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception("No internet connection. Please try again."))
+        }
+    }
+
+    /** Calls one of our Edge Functions as the signed-in user. Errors come back as {"error": "..."}. */
+    suspend fun invokeFunction(name: String, payload: JSONObject): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            val request = buildRequest("$DEFAULT_BASE_URL/functions/v1/$name", "POST", payload.toString())
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: "{}"
+                val json = try { JSONObject(body) } catch (e: Exception) { JSONObject() }
+                if (response.isSuccessful) {
+                    Result.success(json)
+                } else {
+                    val msg = json.optString("error").takeIf { it.isNotBlank() && it != "null" }
+                        ?: if (response.code == 401) "Please log in again." else "Server is busy. Please try again."
+                    Result.failure(Exception(msg))
+                }
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception("No internet connection. Please try again."))
+        }
+    }
+
+    /** What the customer gets back if they cancel now: {refund_amount, kept_amount, message}. */
+    suspend fun getCancellationTermsRpc(bookingId: String): Result<JSONObject> = withContext(Dispatchers.IO) {
+        try {
+            val payload = JSONObject().put("p_booking_id", bookingId)
+            val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/get_cancellation_terms", "POST", payload.toString(), singleObject = true)
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: "{}"
+                if (response.isSuccessful) Result.success(JSONObject(body))
+                else Result.failure(Exception(extractErrorMessage(response.code, body)))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception("No internet connection. Please try again."))
         }
     }
 
@@ -563,13 +741,13 @@ class SupabaseClient(context: Context) {
             val payload = JSONObject().apply {
                 put("p_booking_id", bookingId)
             }
-            val request = buildRequest(url, "POST", payload.toString())
+            val request = buildRequest(url, "POST", payload.toString(), singleObject = true)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "{}"
             if (response.isSuccessful) {
                 Result.success(JSONObject(body))
             } else {
-                Result.failure(Exception("Get booking status failed: ${response.code} $body"))
+                Result.failure(Exception(extractErrorMessage(response.code, body)))
             }
         } catch (e: Exception) {
             Result.failure(e)
@@ -621,7 +799,7 @@ class SupabaseClient(context: Context) {
     // Customer Bookings REST table
     suspend fun getCustomerBookings(customerId: String): Result<JSONArray> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?select=id,salon_id,service_id,staff_id,status,start_time,total_price,notes,salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration,price)&customer_id=eq.$customerId&order=start_time.desc"
+            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?select=id,salon_id,service_id,staff_id,status,start_time,end_time,price,notes,payment_option,payment_status,amount_due,amount_paid,hold_expires_at,salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration_minutes,price)&customer_id=eq.$customerId&order=start_time.desc"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"
@@ -638,7 +816,7 @@ class SupabaseClient(context: Context) {
     // Single Booking details
     suspend fun getSingleBooking(bookingId: String): Result<JSONObject> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?id=eq.$bookingId&select=id,salon_id,service_id,staff_id,status,start_time,total_price,notes,salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration,price)"
+            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?id=eq.$bookingId&select=id,salon_id,service_id,staff_id,status,start_time,end_time,price,notes,payment_option,payment_status,amount_due,amount_paid,hold_expires_at,salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration_minutes,price)"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"
@@ -683,7 +861,7 @@ class SupabaseClient(context: Context) {
     // Salon Reviews REST table
     suspend fun getSalonReviews(salonId: String): Result<JSONArray> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/reviews?salon_id=eq.$salonId&select=id,booking_id,salon_id,customer_name,rating,comment,created_at,owner_reply,owner_reply_date&order=created_at.desc"
+            val url = "$DEFAULT_BASE_URL/rest/v1/reviews?salon_id=eq.$salonId&select=id,booking_id,salon_id,customer_name,rating,comment,created_at,owner_reply&order=created_at.desc"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"
@@ -831,13 +1009,42 @@ class SupabaseClient(context: Context) {
         }
     }
 
+    /** RPCs that return a bare uuid come back as a JSON string ("..."); expose it as {"id": ...}. */
+    private fun parseIdResponse(body: String): JSONObject {
+        val trimmed = body.trim()
+        return when {
+            trimmed.startsWith("{") -> JSONObject(trimmed)
+            trimmed.startsWith("\"") -> JSONObject().put("id", trimmed.trim('"'))
+            else -> JSONObject()
+        }
+    }
+
+    /**
+     * Turns PostgREST / GoTrue errors into messages that are safe to show to customers. Business-rule
+     * messages raised by our RPCs (e.g. "Slot not available") are already user-facing and pass through.
+     */
     private fun extractErrorMessage(code: Int, body: String): String {
-        return try {
+        val raw = try {
             val json = JSONObject(body)
-            json.optString("message", json.optString("error", "Error ($code)"))
+            listOf("message", "msg", "error_description", "error").map { json.optString(it) }.firstOrNull { it.isNotBlank() } ?: ""
         } catch (e: Exception) {
-            if (code == 409) "Slot just got booked, please pick another"
-            else "Request error ($code)"
+            ""
+        }
+        val lower = raw.lowercase()
+        return when {
+            lower.contains("invalid login credentials") -> "Incorrect email or password."
+            lower.contains("email not confirmed") -> "Please confirm your email address, then sign in."
+            lower.contains("user already registered") -> "An account with this email already exists. Please sign in."
+            lower.contains("password should be") -> "Password must be at least 6 characters."
+            lower.contains("jwt") || code == 401 -> "Your session has expired. Please sign in again."
+            lower.contains("row-level security") || lower.contains("permission denied") || code == 403 ->
+                "You are not allowed to do this."
+            lower.contains("exclusion") || lower.contains("duplicate key") || code == 409 ->
+                "Slot just got booked, please pick another"
+            lower.contains("rate limit") || code == 429 -> "Too many attempts. Please wait a moment and try again."
+            code >= 500 -> "Server is busy. Please try again."
+            raw.isNotBlank() && !lower.contains("violates") && !lower.contains("syntax") && !lower.contains("column") -> raw
+            else -> "Something went wrong. Please try again."
         }
     }
 }

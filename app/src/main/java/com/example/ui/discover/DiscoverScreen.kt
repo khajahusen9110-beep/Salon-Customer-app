@@ -39,37 +39,34 @@ fun DiscoverScreen(
     authRepo: AuthRepository,
     unreadNotificationsCount: Int = 0,
     onOpenNotifications: () -> Unit = {},
+    onChangeLocation: () -> Unit = {},
     onSalonSelected: (String) -> Unit
 ) {
     val lang by authRepo.currentLanguage.collectAsState()
+    val location by authRepo.location.collectAsState()
     val favoriteIds by salonRepo.favoriteIds.collectAsState()
     val scope = rememberCoroutineScope()
 
     var salons by remember { mutableStateOf<List<Salon>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var reloadKey by remember { mutableStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
-    var selectedCity by remember { mutableStateOf("All Cities") }
-    var cityMenuExpanded by remember { mutableStateOf(false) }
     var selectedTypeFilter by remember { mutableStateOf("All") } // "All", "Men", "Women", "Unisex"
-    var sortBy by remember { mutableStateOf("Rating") } // "Rating", "Nearest"
+    // With a GPS point the list comes back nearest-first; otherwise rating is the useful default.
+    var sortBy by remember(location) { mutableStateOf(if (location?.latitude != null) "Nearest" else "Rating") }
 
-    val cities = remember(salons) {
-        val uniqueCities = salons.map { it.city.trim() }.filter { it.isNotBlank() }.distinct().sorted()
-        listOf("All Cities") + uniqueCities
-    }
-
-    LaunchedEffect(Unit) {
+    LaunchedEffect(reloadKey, location) {
+        val loc = location ?: return@LaunchedEffect
         isLoading = true
-        salons = salonRepo.getSalons()
+        val res = salonRepo.loadNearbySalons(loc)
+        res.onSuccess { salons = it; loadError = null }
+        res.onFailure { loadError = it.message }
         isLoading = false
     }
 
-    val filteredSalons = remember(salons, searchQuery, selectedCity, selectedTypeFilter, sortBy) {
+    val filteredSalons = remember(salons, searchQuery, selectedTypeFilter, sortBy) {
         var list = salons.filter { it.isVerified && it.isActive }
-
-        if (selectedCity != "All Cities") {
-            list = list.filter { it.city.equals(selectedCity, ignoreCase = true) }
-        }
 
         if (selectedTypeFilter != "All") {
             list = list.filter { it.salonType.equals(selectedTypeFilter, ignoreCase = true) }
@@ -87,7 +84,7 @@ fun DiscoverScreen(
         if (sortBy == "Rating") {
             list = list.sortedByDescending { it.ratingAvg }
         } else {
-            list = list.sortedBy { it.area }
+            list = list.sortedWith(compareBy(nullsLast()) { it.distanceKm })
         }
 
         list
@@ -118,50 +115,33 @@ fun DiscoverScreen(
                             letterSpacing = 1.sp
                         )
 
-                        Box {
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { cityMenuExpanded = true }
-                                    .padding(vertical = 2.dp)
-                                    .testTag("city_selector_dropdown"),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.LocationOn,
-                                    contentDescription = "Location",
-                                    tint = GoldPrimary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = selectedCity,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.KeyboardArrowDown,
-                                    contentDescription = "Dropdown",
-                                    tint = Slate500,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-
-                            DropdownMenu(
-                                expanded = cityMenuExpanded,
-                                onDismissRequest = { cityMenuExpanded = false }
-                            ) {
-                                cities.forEach { city ->
-                                    DropdownMenuItem(
-                                        text = { Text(city, fontWeight = if (city == selectedCity) FontWeight.Bold else FontWeight.Normal) },
-                                        onClick = {
-                                            selectedCity = city
-                                            cityMenuExpanded = false
-                                        }
-                                    )
-                                }
-                            }
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onChangeLocation() }
+                                .padding(vertical = 2.dp)
+                                .testTag("city_selector_dropdown"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (location?.latitude != null) Icons.Default.MyLocation else Icons.Default.LocationOn,
+                                contentDescription = "Location",
+                                tint = GoldPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = location?.city ?: "",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowDown,
+                                contentDescription = "Change location",
+                                tint = Slate500,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
 
@@ -330,6 +310,36 @@ fun DiscoverScreen(
             Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = GoldPrimary)
             }
+        } else if (loadError != null && salons.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = Icons.Default.CloudOff,
+                        contentDescription = null,
+                        tint = Slate400,
+                        modifier = Modifier.size(54.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = loadError ?: "",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Slate500,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { reloadKey++ },
+                        colors = ButtonDefaults.buttonColors(containerColor = GoldPrimary),
+                        modifier = Modifier.testTag("discover_retry")
+                    ) { Text("Retry") }
+                }
+            }
         } else if (filteredSalons.isEmpty()) {
             Box(
                 modifier = Modifier
@@ -352,12 +362,19 @@ fun DiscoverScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Try adjusting your search query, city or type filters.",
+                        text = if (salons.isEmpty()) "No salons near ${location?.city ?: "you"} yet. Try another city."
+                        else "Try adjusting your search or type filters.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Slate500,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         modifier = Modifier.padding(top = 4.dp)
                     )
+                    if (salons.isEmpty()) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        OutlinedButton(onClick = onChangeLocation, modifier = Modifier.testTag("discover_change_city")) {
+                            Text("Change location", color = GoldPrimary)
+                        }
+                    }
                 }
             }
         } else {
@@ -507,31 +524,7 @@ fun SalonCard(
                     }
                 }
 
-                // Live Availability Teaser Pill
-                Surface(
-                    color = Color.Black.copy(alpha = 0.75f),
-                    shape = RoundedCornerShape(topStart = 12.dp),
-                    modifier = Modifier.align(Alignment.BottomEnd)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(EmeraldLive)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "2 stylists free now",
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
+                // Live stylist availability is shown on the salon page (real queue data).
             }
 
             // Card Body
@@ -578,10 +571,21 @@ fun SalonCard(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "${salon.area}, ${salon.city}",
+                        text = listOf(salon.area, salon.city).filter { it.isNotBlank() }.joinToString(", "),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Slate600
+                        color = Slate600,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
+                    salon.distanceKm?.let { km ->
+                        Text(
+                            text = " • " + if (km < 1) "${(km * 1000).toInt()} m" else String.format(java.util.Locale.US, "%.1f km", km),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Slate700
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
