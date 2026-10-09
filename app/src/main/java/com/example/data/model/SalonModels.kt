@@ -9,6 +9,16 @@ data class UserProfile(
     val language: String = "en"
 )
 
+/** A salon facility (AC, Free WiFi...). Same exclusiveGroup = alternatives (AC / Non-AC). */
+data class Amenity(
+    val id: String,
+    val name: String,
+    val icon: String,
+    val groupName: String,
+    val exclusiveGroup: String? = null,
+    val highlight: Boolean = false
+)
+
 /** Where the customer is looking for salons: a city, plus the GPS point when location was allowed. */
 data class UserLocation(
     val city: String,
@@ -34,7 +44,8 @@ data class Salon(
     val latitude: Double? = null,
     val longitude: Double? = null,
     val bookingWindowDays: Int = 14,
-    val distanceKm: Double? = null
+    val distanceKm: Double? = null,
+    val amenityIds: List<String> = emptyList()
 ) {
     val coverPhotoUrl: String
         get() = if (photos.isNotEmpty() && coverPhotoIndex in photos.indices) {

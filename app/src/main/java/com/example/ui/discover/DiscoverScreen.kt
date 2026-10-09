@@ -3,6 +3,9 @@ package com.example.ui.discover
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,6 +28,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.model.Amenity
 import com.example.data.model.Salon
 import com.example.data.repository.AuthRepository
 import com.example.data.repository.SalonRepository
@@ -56,10 +60,16 @@ fun DiscoverScreen(
     // With a GPS point the list comes back nearest-first; otherwise rating is the useful default.
     var sortBy by remember(location) { mutableStateOf(if (location?.latitude != null) "Nearest" else "Rating") }
 
-    LaunchedEffect(reloadKey, location) {
+    // Facility filter (AC, Free WiFi, Parking...): the server returns only salons that have ALL of them.
+    var amenities by remember { mutableStateOf<List<Amenity>>(emptyList()) }
+    var amenityFilter by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showAmenitySheet by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { amenities = salonRepo.loadAmenities() }
+
+    LaunchedEffect(reloadKey, location, amenityFilter) {
         val loc = location ?: return@LaunchedEffect
         isLoading = true
-        val res = salonRepo.loadNearbySalons(loc)
+        val res = salonRepo.loadNearbySalons(loc, amenityFilter.toList())
         res.onSuccess { salons = it; loadError = null }
         res.onFailure { loadError = it.message }
         isLoading = false
@@ -279,6 +289,38 @@ fun DiscoverScreen(
                     VerticalDivider(modifier = Modifier.height(20.dp), color = Slate300)
                     Spacer(modifier = Modifier.width(4.dp))
 
+                    // Facilities filter
+                    FilterChip(
+                        selected = amenityFilter.isNotEmpty(),
+                        onClick = { showAmenitySheet = true },
+                        label = {
+                            Text(if (amenityFilter.isEmpty()) "Facilities" else "Facilities (${amenityFilter.size})", fontSize = 12.sp)
+                        },
+                        leadingIcon = { Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Slate900,
+                            selectedLabelColor = Color.White,
+                            selectedLeadingIconColor = Color.White
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(enabled = true, selected = amenityFilter.isNotEmpty(), borderColor = Slate200),
+                        modifier = Modifier.testTag("filter_facilities")
+                    )
+                    // Quick chips for the highlighted facilities (e.g. AC, Free WiFi)
+                    amenities.filter { it.highlight }.forEach { a ->
+                        val on = a.id in amenityFilter
+                        FilterChip(
+                            selected = on,
+                            onClick = { amenityFilter = toggleAmenity(amenityFilter, a, amenities) },
+                            label = { Text("${a.icon} ${a.name}", fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Slate900, selectedLabelColor = Color.White),
+                            border = FilterChipDefaults.filterChipBorder(enabled = true, selected = on, borderColor = Slate200)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(4.dp))
+                    VerticalDivider(modifier = Modifier.height(20.dp), color = Slate300)
+                    Spacer(modifier = Modifier.width(4.dp))
+
                     // Sort By Rating / Nearest
                     AssistChip(
                         onClick = {
@@ -362,14 +404,20 @@ fun DiscoverScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = if (salons.isEmpty()) "No salons near ${location?.city ?: "you"} yet. Try another city."
+                        text = if (salons.isEmpty() && amenityFilter.isNotEmpty()) "No salons nearby have all the facilities you picked. Remove a filter to see more."
+                        else if (salons.isEmpty()) "No salons near ${location?.city ?: "you"} yet. Try another city."
                         else "Try adjusting your search or type filters.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Slate500,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         modifier = Modifier.padding(top = 4.dp)
                     )
-                    if (salons.isEmpty()) {
+                    if (salons.isEmpty() && amenityFilter.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        OutlinedButton(onClick = { amenityFilter = emptySet() }, modifier = Modifier.testTag("discover_clear_facilities")) {
+                            Text("Clear facility filters", color = GoldPrimary)
+                        }
+                    } else if (salons.isEmpty()) {
                         Spacer(modifier = Modifier.height(16.dp))
                         OutlinedButton(onClick = onChangeLocation, modifier = Modifier.testTag("discover_change_city")) {
                             Text("Change location", color = GoldPrimary)
@@ -444,6 +492,7 @@ fun DiscoverScreen(
                     val isFav = favoriteIds.contains(salon.id)
                     SalonCard(
                         salon = salon,
+                        highlightAmenities = amenities.filter { it.highlight && it.id in salon.amenityIds },
                         isFavorite = isFav,
                         onFavoriteClick = { salonRepo.toggleFavorite(salon.id) },
                         onClick = { onSalonSelected(salon.id) }
@@ -452,12 +501,22 @@ fun DiscoverScreen(
             }
         }
     }
+
+    if (showAmenitySheet) {
+        AmenityFilterSheet(
+            amenities = amenities,
+            selected = amenityFilter,
+            onApply = { amenityFilter = it; showAmenitySheet = false },
+            onDismiss = { showAmenitySheet = false }
+        )
+    }
 }
 
 @Composable
 fun SalonCard(
     salon: Salon,
     isFavorite: Boolean,
+    highlightAmenities: List<Amenity> = emptyList(),
     onFavoriteClick: () -> Unit,
     onClick: () -> Unit
 ) {
@@ -588,6 +647,15 @@ fun SalonCard(
                     }
                 }
 
+                if (highlightAmenities.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = highlightAmenities.joinToString("  ·  ") { "${it.icon} ${it.name}" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Slate600
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(10.dp))
 
                 // Star Rating & Review Count
@@ -636,6 +704,54 @@ fun SalonCard(
                         color = GoldPrimary
                     )
                 }
+            }
+        }
+    }
+}
+
+/** Adds/removes a facility; for one-of groups (AC / Non-AC / Partly AC) keeps only the new choice. */
+private fun toggleAmenity(current: Set<String>, a: Amenity, all: List<Amenity>): Set<String> {
+    if (a.id in current) return current - a.id
+    val sameGroup = a.exclusiveGroup?.let { g -> all.filter { it.exclusiveGroup == g }.map { it.id }.toSet() } ?: emptySet()
+    return (current - sameGroup) + a.id
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun AmenityFilterSheet(
+    amenities: List<Amenity>,
+    selected: Set<String>,
+    onApply: (Set<String>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var picked by remember { mutableStateOf(selected) }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState())) {
+            Text("Filter by facilities", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("Show salons that have all of these.", style = MaterialTheme.typography.bodySmall, color = Slate500)
+            Spacer(modifier = Modifier.height(12.dp))
+            amenities.groupBy { it.groupName }.forEach { (group, items) ->
+                Text(group, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items.forEach { a ->
+                        val on = a.id in picked
+                        FilterChip(
+                            selected = on,
+                            onClick = { picked = toggleAmenity(picked, a, amenities) },
+                            label = { Text("${a.icon} ${a.name}", fontSize = 12.sp) },
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Slate900, selectedLabelColor = Color.White)
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { picked = emptySet() }, modifier = Modifier.weight(1f)) { Text("Clear") }
+                Button(
+                    onClick = { onApply(picked) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                    modifier = Modifier.weight(1f).testTag("apply_facility_filter")
+                ) { Text("Show salons", color = Color.White) }
             }
         }
     }

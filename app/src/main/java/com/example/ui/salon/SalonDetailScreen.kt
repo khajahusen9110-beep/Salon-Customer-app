@@ -44,7 +44,7 @@ import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SalonDetailScreen(
     salonId: String,
@@ -87,6 +87,8 @@ fun SalonDetailScreen(
 
     var isInitialLoading by remember { mutableStateOf(true) }
     var selectedCategoryId by remember { mutableStateOf<String?>(null) }
+    var allAmenities by remember { mutableStateOf<List<Amenity>>(emptyList()) }
+    LaunchedEffect(Unit) { allAmenities = salonRepo.loadAmenities() }
 
     // Fetch individual sections with isolated failure resilience
     suspend fun loadSalonData() {
@@ -592,6 +594,35 @@ fun SalonDetailScreen(
                                         fontWeight = FontWeight.Bold,
                                         color = GoldPrimary,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Facilities (AC, Free WiFi, Parking...)
+            val salonAmenities = allAmenities.filter { it.id in (salon?.amenityIds ?: emptyList()) }
+            if (salonAmenities.isNotEmpty()) {
+                item {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp).padding(top = 16.dp).testTag("salon_facilities")) {
+                        Text(
+                            text = "Facilities",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            salonAmenities.forEach { a ->
+                                Surface(shape = RoundedCornerShape(20.dp), color = Slate100) {
+                                    Text(
+                                        "${a.icon} ${a.name}",
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                                     )
                                 }
                             }

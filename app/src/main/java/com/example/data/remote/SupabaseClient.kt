@@ -325,7 +325,9 @@ class SupabaseClient(context: Context) {
     }
 
     /** Salons within [radiusKm] of the point (plus same-city salons without a map pin), nearest first. */
-    suspend fun getNearbySalons(lat: Double?, lng: Double?, city: String?, radiusKm: Double = 25.0): Result<JSONArray> =
+    suspend fun getNearbySalons(
+        lat: Double?, lng: Double?, city: String?, amenityIds: List<String> = emptyList(), radiusKm: Double = 25.0
+    ): Result<JSONArray> =
         withContext(Dispatchers.IO) {
             try {
                 val payload = JSONObject()
@@ -333,7 +335,9 @@ class SupabaseClient(context: Context) {
                     .put("p_lng", lng ?: JSONObject.NULL)
                     .put("p_radius_km", radiusKm)
                     .put("p_city", city?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
-                val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/get_nearby_salons", "POST", payload.toString())
+                    .put("p_amenity_ids", if (amenityIds.isEmpty()) JSONObject.NULL else JSONArray(amenityIds))
+                // search_salons = get_nearby_salons + facility filter + each salon's facility ids
+                val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/search_salons", "POST", payload.toString())
                 httpClient.newCall(request).execute().use { response ->
                     val body = response.body?.string() ?: "[]"
                     if (response.isSuccessful) Result.success(JSONArray(body))
@@ -343,6 +347,20 @@ class SupabaseClient(context: Context) {
                 Result.failure(e)
             }
         }
+
+    /** Active facilities (AC, Free WiFi...), in display order. */
+    suspend fun getAmenities(): Result<JSONArray> = withContext(Dispatchers.IO) {
+        try {
+            val url = "$DEFAULT_BASE_URL/rest/v1/amenities?is_active=eq.true&select=id,name,icon,group_name,exclusive_group,highlight,sort_order&order=sort_order,name"
+            httpClient.newCall(buildRequest(url)).execute().use { response ->
+                val body = response.body?.string() ?: "[]"
+                if (response.isSuccessful) Result.success(JSONArray(body))
+                else Result.failure(Exception(extractErrorMessage(response.code, body)))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 
     /** Cities that have at least one live salon: [{city, salon_count}]. */
     suspend fun listCities(): Result<JSONArray> = withContext(Dispatchers.IO) {
@@ -360,7 +378,7 @@ class SupabaseClient(context: Context) {
 
     suspend fun getSalonById(salonId: String): Result<JSONObject> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/salons?id=eq.$salonId&select=id,name,description,salon_type,area,city,address,phone,photos,cover_photo_index,rating_avg,rating_count,is_verified,is_active,latitude,longitude,booking_window_days"
+            val url = "$DEFAULT_BASE_URL/rest/v1/salons?id=eq.$salonId&select=id,name,description,salon_type,area,city,address,phone,photos,cover_photo_index,rating_avg,rating_count,is_verified,is_active,latitude,longitude,booking_window_days,amenity_ids"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"

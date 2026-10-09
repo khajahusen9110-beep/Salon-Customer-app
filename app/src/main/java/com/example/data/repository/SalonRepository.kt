@@ -93,10 +93,29 @@ class SalonRepository(private val context: Context) {
     }
 
     /** Salons near the customer's location (or in their city), nearest first. */
-    suspend fun loadNearbySalons(location: UserLocation): Result<List<Salon>> {
-        val arr = supabaseClient.getNearbySalons(location.latitude, location.longitude, location.city).getOrNull()
+    suspend fun loadNearbySalons(location: UserLocation, amenityIds: List<String> = emptyList()): Result<List<Salon>> {
+        val arr = supabaseClient.getNearbySalons(location.latitude, location.longitude, location.city, amenityIds).getOrNull()
             ?: return Result.failure(Exception("Couldn't load salons. Check your internet connection and try again."))
         return Result.success((0 until arr.length()).map { parseSalon(arr.getJSONObject(it)) })
+    }
+
+    private var amenityCache: List<Amenity>? = null
+
+    /** The facility list (cached for the app session). */
+    suspend fun loadAmenities(): List<Amenity> {
+        amenityCache?.let { return it }
+        val arr = supabaseClient.getAmenities().getOrNull() ?: return emptyList()
+        val list = (0 until arr.length()).map {
+            val o = arr.getJSONObject(it)
+            Amenity(
+                id = o.optString("id"), name = o.optString("name"), icon = o.optString("icon"),
+                groupName = o.optString("group_name"),
+                exclusiveGroup = if (o.isNull("exclusive_group")) null else o.optString("exclusive_group"),
+                highlight = o.optBoolean("highlight")
+            )
+        }
+        amenityCache = list
+        return list
     }
 
     /** Cities that have live salons, with how many: used for manual city selection. */
@@ -1019,7 +1038,8 @@ class SalonRepository(private val context: Context) {
             latitude = lat,
             longitude = lng,
             bookingWindowDays = json.optInt("booking_window_days", 14),
-            distanceKm = if (json.has("distance_km") && !json.isNull("distance_km")) json.optDouble("distance_km") else null
+            distanceKm = if (json.has("distance_km") && !json.isNull("distance_km")) json.optDouble("distance_km") else null,
+            amenityIds = json.optJSONArray("amenity_ids")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList()
         )
     }
 
