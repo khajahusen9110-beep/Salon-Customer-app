@@ -148,6 +148,19 @@ fun PhoneLoginScreen(authRepo: AuthRepository) {
                 }
             }
         }
+
+        // Help when the OTP does not arrive or the account is blocked
+        var showHelp by remember { mutableStateOf(false) }
+        var appInfo by remember { mutableStateOf<com.example.data.model.AppInfo?>(null) }
+        LaunchedEffect(showHelp) {
+            if (showHelp && appInfo == null) {
+                appInfo = com.example.data.repository.SalonRepository.appInfoFrom(authRepo.supabaseClient.getAppInfo().getOrNull())
+            }
+        }
+        TextButton(onClick = { showHelp = true }, modifier = Modifier.padding(top = 12.dp).testTag("login_help")) {
+            Text(t(lang, "Trouble logging in? Contact support", "लॉगिन में दिक्कत? सपोर्ट से संपर्क करें"), color = Slate500, fontSize = 13.sp)
+        }
+        if (showHelp) com.example.ui.support.SupportContactDialog(appInfo) { showHelp = false }
     }
 }
 

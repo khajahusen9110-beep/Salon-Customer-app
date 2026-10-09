@@ -219,7 +219,20 @@ fun MainApp(
                         },
                         onRebook = { salonId, serviceId, staffId ->
                             navController.navigate(Screen.BookFlow.createRoute(salonId, serviceId, null, staffId))
-                        }
+                        },
+                        onNavigateToSupport = { navController.navigate(Screen.Support.createRoute()) }
+                    )
+                }
+
+                // Help & Support (optionally about one booking)
+                composable(
+                    route = Screen.Support.route,
+                    arguments = listOf(navArgument("bookingId") { type = NavType.StringType; nullable = true; defaultValue = null })
+                ) { backStackEntry ->
+                    com.example.ui.support.SupportScreen(
+                        salonRepo = salonRepo,
+                        bookingId = backStackEntry.arguments?.getString("bookingId")?.takeIf { it.isNotBlank() },
+                        onBack = { navController.popBackStack() }
                     )
                 }
 
@@ -305,7 +318,8 @@ fun MainApp(
                         onBack = { navController.popBackStack() },
                         onBookAgain = { salonId, serviceId, staffId ->
                             navController.navigate(Screen.BookFlow.createRoute(salonId, serviceId, null, staffId))
-                        }
+                        },
+                        onNeedHelp = { navController.navigate(Screen.Support.createRoute(bookingId)) }
                     )
                 }
             }

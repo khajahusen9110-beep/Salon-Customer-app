@@ -214,6 +214,29 @@ class SalonRepository(private val context: Context) {
         return emptyList()
     }
 
+    suspend fun getAppInfo(): AppInfo = appInfoFrom(supabaseClient.getAppInfo().getOrNull())
+
+    suspend fun getMySupportTickets(): Result<List<SupportTicket>> =
+        supabaseClient.getMySupportTickets().map { arr ->
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                SupportTicket(
+                    id = o.optString("id"),
+                    ticketNo = o.optLong("ticket_no"),
+                    category = o.optString("category"),
+                    subject = o.optString("subject"),
+                    message = o.optString("message"),
+                    status = o.optString("status", "open"),
+                    adminReply = o.optString("admin_reply").takeIf { !o.isNull("admin_reply") && it.isNotBlank() },
+                    createdAt = o.optString("created_at"),
+                    bookingId = o.optString("booking_id").takeIf { !o.isNull("booking_id") && it.isNotBlank() }
+                )
+            }
+        }
+
+    suspend fun createSupportTicket(category: String, subject: String, message: String, bookingId: String?): Result<Unit> =
+        supabaseClient.createSupportTicket(category, subject.trim(), message.trim(), bookingId).map { }
+
     /** Wedding booking rules from the platform (falls back to the published defaults). */
     suspend fun getWeddingRules(): WeddingRules {
         val row = supabaseClient.getWeddingRules().getOrNull()?.optJSONObject(0) ?: return WeddingRules()
@@ -1141,5 +1164,15 @@ class SalonRepository(private val context: Context) {
             amountPaid = json.optDouble("amount_paid", 0.0),
             isWedding = json.optBoolean("is_wedding", false)
         )
+    }
+
+    companion object {
+        /** Parses the get_app_info row (empty info when it could not be loaded). */
+        fun appInfoFrom(arr: org.json.JSONArray?): AppInfo {
+            val row = arr?.optJSONObject(0) ?: return AppInfo()
+            fun str(k: String) = row.optString(k).takeIf { !row.isNull(k) && it.isNotBlank() }
+            return AppInfo(str("support_phone"), str("support_email"), str("support_whatsapp"), str("support_hours"),
+                str("terms_url"), str("privacy_url"))
+        }
     }
 }

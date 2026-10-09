@@ -278,3 +278,28 @@ data class NotificationItem(
 
 /** Platform rules for wedding (Bridal / Groom) bookings. */
 data class WeddingRules(val advancePercent: Int = 40, val freeCancelDays: Int = 15)
+
+/** Support contact and legal links set by the platform admin. */
+data class AppInfo(
+    val supportPhone: String? = null,
+    val supportEmail: String? = null,
+    val supportWhatsapp: String? = null,
+    val supportHours: String? = null,
+    val termsUrl: String? = null,
+    val privacyUrl: String? = null
+) {
+    val hasContact: Boolean get() = supportPhone != null || supportEmail != null || supportWhatsapp != null
+}
+
+/** A help / complaint request and the support team's reply. */
+data class SupportTicket(
+    val id: String,
+    val ticketNo: Long,
+    val category: String,
+    val subject: String,
+    val message: String,
+    val status: String, // open, in_progress, resolved, closed
+    val adminReply: String?,
+    val createdAt: String,
+    val bookingId: String?
+)

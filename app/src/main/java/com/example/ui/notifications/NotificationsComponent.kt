@@ -291,6 +291,8 @@ fun NotificationIconBadge(type: String) {
         "booking_cancelled" -> Triple(Icons.Default.Cancel, Color(0xFFFEE2E2), Color(0xFFDC2626))
         "booking_rescheduled" -> Triple(Icons.Default.Event, Color(0xFFEEF2FF), Color(0xFF4F46E5))
         "late_credit" -> Triple(Icons.Default.AccountBalanceWallet, Color(0xFFD1FAE5), Color(0xFF059669))
+        "announcement" -> Triple(Icons.Default.Campaign, Color(0xFFFCE7F3), Color(0xFFBE185D))
+        "support_reply" -> Triple(Icons.Default.SupportAgent, Color(0xFFEDE9FE), Color(0xFF7C3AED))
         else -> Triple(Icons.Default.AccessTime, Color(0xFFE0F2FE), Color(0xFF0284C7)) // reminder
     }
 

@@ -37,7 +37,8 @@ fun ProfileScreen(
     onSignOut: () -> Unit,
     onNavigateToFavorites: () -> Unit = {},
     onNavigateToBookings: () -> Unit = {},
-    onRebook: (salonId: String, serviceId: String?, staffId: String?) -> Unit = { _, _, _ -> }
+    onRebook: (salonId: String, serviceId: String?, staffId: String?) -> Unit = { _, _, _ -> },
+    onNavigateToSupport: () -> Unit = {}
 ) {
     val lang by authRepo.currentLanguage.collectAsState()
     val currentUser by authRepo.currentUser.collectAsState()
@@ -464,6 +465,24 @@ fun ProfileScreen(
                             }
                         }
                     }
+                }
+            }
+
+            // Help & Support
+            OutlinedCard(
+                onClick = onNavigateToSupport,
+                modifier = Modifier.fillMaxWidth().testTag("profile_support"),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.SupportAgent, contentDescription = null, tint = GoldPrimary, modifier = Modifier.size(24.dp))
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Help & Support", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text("Contact us, report a problem, see replies", fontSize = 12.sp, color = Slate500)
+                    }
+                    Icon(Icons.Default.ChevronRight, contentDescription = null, tint = Slate400)
                 }
             }
 

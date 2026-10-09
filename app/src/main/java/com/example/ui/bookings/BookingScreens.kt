@@ -557,7 +557,8 @@ fun BookingTrackerScreen(
     salonRepo: SalonRepository,
     authRepo: AuthRepository,
     onBack: () -> Unit,
-    onBookAgain: (String, String?, String?) -> Unit = { _, _, _ -> }
+    onBookAgain: (String, String?, String?) -> Unit = { _, _, _ -> },
+    onNeedHelp: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -616,6 +617,13 @@ fun BookingTrackerScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.testTag("tracker_back_button")) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    TextButton(onClick = onNeedHelp, modifier = Modifier.testTag("tracker_help_button")) {
+                        Icon(Icons.Default.SupportAgent, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Help")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)

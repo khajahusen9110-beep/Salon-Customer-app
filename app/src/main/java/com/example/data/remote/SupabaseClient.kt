@@ -214,6 +214,8 @@ class SupabaseClient(context: Context) {
                 "Please wait a minute before asking for another OTP."
             lower.contains("phone") && (lower.contains("disabled") || lower.contains("provider")) ->
                 "Mobile login is not available right now. Please try again later."
+            lower.contains("banned") ->
+                "Your account is blocked. Please contact support."
             lower.contains("sms") || lower.contains("hook") ->
                 "Could not send the OTP SMS. Please try again."
             else -> extractErrorMessage(code, body)
@@ -378,6 +380,31 @@ class SupabaseClient(context: Context) {
     /** Platform wedding booking rules (advance %, free-cancellation days). Signed-in users only. */
     suspend fun getWeddingRules(): Result<JSONArray> =
         getRows("platform_settings?select=wedding_advance_percent,wedding_free_cancel_days")
+
+    /** Support contact and legal links (works before login too). */
+    suspend fun getAppInfo(): Result<JSONArray> = rpcRows("get_app_info", JSONObject())
+
+    /** The signed-in user's own support requests, newest first. */
+    suspend fun getMySupportTickets(): Result<JSONArray> =
+        getRows("support_tickets?select=id,ticket_no,category,subject,message,status,admin_reply,replied_at,created_at,booking_id&order=created_at.desc&limit=50")
+
+    /** Sends a support request (complaint / help); returns its id. */
+    suspend fun createSupportTicket(category: String, subject: String, message: String, bookingId: String?): Result<JSONObject> =
+        withContext(Dispatchers.IO) {
+            try {
+                val payload = JSONObject()
+                    .put("p_category", category).put("p_subject", subject).put("p_message", message)
+                    .put("p_booking_id", bookingId ?: JSONObject.NULL)
+                val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/create_support_ticket", "POST", payload.toString())
+                httpClient.newCall(request).execute().use { response ->
+                    val body = response.body?.string() ?: ""
+                    if (response.isSuccessful) Result.success(parseIdResponse(body))
+                    else Result.failure(Exception(extractErrorMessage(response.code, body)))
+                }
+            } catch (e: Exception) {
+                Result.failure(Exception("No internet connection. Please try again."))
+            }
+        }
 
     /** Salons offering Bridal / Groom services: [{salon_id}]. */
     suspend fun getWeddingSalonIds(): Result<JSONArray> =
