@@ -481,7 +481,8 @@ class SalonRepository(private val context: Context) {
                                 dateString = dateKey,
                                 dayName = dayName,
                                 dayNumber = dayNum,
-                                slotCount = count
+                                slotCount = count,
+                                isOpen = item.optBoolean("is_open", true)
                             )
                         )
                     }

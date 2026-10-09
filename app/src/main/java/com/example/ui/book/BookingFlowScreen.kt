@@ -137,6 +137,15 @@ fun BookingFlowScreen(
         }
     }
 
+    // Real free-slot count per stylist for the selected day (shown on each stylist card).
+    var staffSlotCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    LaunchedEffect(selectedDay?.dateString, selectedService?.id, staffList) {
+        val srv = selectedService ?: return@LaunchedEffect
+        val day = selectedDay ?: return@LaunchedEffect
+        staffSlotCounts = emptyMap()
+        staffSlotCounts = staffList.associate { st -> st.id to salonRepo.getAvailableSlots(srv.id, st.id, day.dateString).size }
+    }
+
     // Refresh Slots when Selected Date or Stylist changes
     LaunchedEffect(selectedDay?.dateString, selectedStaffId, selectedService?.id) {
         val srv = selectedService ?: return@LaunchedEffect
@@ -695,10 +704,12 @@ fun BookingFlowScreen(
                                                 fontWeight = FontWeight.SemiBold,
                                                 color = Slate700
                                             )
-                                            if (selectedDay != null) {
+                                            val count = staffSlotCounts[staff.id]
+                                            if (selectedDay != null && count != null) {
                                                 Spacer(modifier = Modifier.width(8.dp))
                                                 Text(
-                                                    text = "• ${staff.slotsCountToday} slots",
+                                                    text = if (count == 0) "• no slots ${if (selectedDay?.dayName == "Today") "today" else "this day"}"
+                                                           else "• $count slots ${if (selectedDay?.dayName == "Today") "today" else "this day"}",
                                                     fontSize = 11.sp,
                                                     color = EmeraldLive,
                                                     fontWeight = FontWeight.Medium
@@ -755,6 +766,7 @@ fun BookingFlowScreen(
                     ) {
                         dayAvailabilityList.forEach { day ->
                             val isSelected = selectedDay?.dateString == day.dateString
+                            val isClosed = !day.isOpen
                             val isFull = day.slotCount <= 0
                             val isLow = day.slotCount in 1..3
 
@@ -807,7 +819,14 @@ fun BookingFlowScreen(
 
                                     Spacer(modifier = Modifier.height(4.dp))
 
-                                    if (isFull) {
+                                    if (isClosed) {
+                                        Text(
+                                            text = "Closed",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) Slate300 else Slate400
+                                        )
+                                    } else if (isFull) {
                                         Text(
                                             text = "Full",
                                             fontSize = 9.sp,

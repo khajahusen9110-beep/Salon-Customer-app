@@ -123,15 +123,15 @@ data class StaffMember(
     val photoUrl: String = "",
     val ratingAvg: Double = 0.0,
     val ratingCount: Int = 0,
-    val title: String = "Stylist",
-    val slotsCountToday: Int = 0
+    val title: String = "Stylist"
 )
 
 data class DayAvailability(
     val dateString: String, // e.g. "2026-09-24"
     val dayName: String,    // e.g. "Wed"
     val dayNumber: String,  // e.g. "24"
-    val slotCount: Int = 0
+    val slotCount: Int = 0,
+    val isOpen: Boolean = true // false = salon closed / stylist off that day (not "full")
 )
 
 data class TimeSlot(

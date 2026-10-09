@@ -559,7 +559,7 @@ class SupabaseClient(context: Context) {
     suspend fun getWeekAvailabilityRpc(serviceId: String, staffId: String?): Result<JSONArray> = withContext(Dispatchers.IO) {
         try {
             val cleanStaffId = staffId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
-            val url = "$DEFAULT_BASE_URL/rest/v1/rpc/get_week_availability"
+            val url = "$DEFAULT_BASE_URL/rest/v1/rpc/get_week_availability_v2"
             val payload = JSONObject().apply {
                 put("p_service_id", serviceId)
                 if (cleanStaffId != null) {
