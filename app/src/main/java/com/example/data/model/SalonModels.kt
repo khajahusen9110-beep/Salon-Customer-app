@@ -29,7 +29,7 @@ data class UserLocation(
 data class Salon(
     val id: String,
     val name: String,
-    val salonType: String, // "Men", "Women", "Unisex"
+    val salonType: String, // "men", "women" (beauty parlour), "unisex"
     val area: String,
     val city: String,
     val address: String = "",
@@ -47,6 +47,14 @@ data class Salon(
     val distanceKm: Double? = null,
     val amenityIds: List<String> = emptyList()
 ) {
+    /** What customers see: a women-only place is a beauty parlour. */
+    val typeLabel: String
+        get() = when (salonType) {
+            "men" -> "Men's Salon"
+            "women" -> "Beauty Parlour"
+            else -> "Unisex"
+        }
+
     val coverPhotoUrl: String
         get() = if (photos.isNotEmpty() && coverPhotoIndex in photos.indices) {
             photos[coverPhotoIndex]
@@ -110,7 +118,8 @@ data class ComboItem(
     val originalPrice: Double = 0.0,
     val description: String = "",
     val serviceNames: List<String> = emptyList(),
-    val durationMinutes: Int = 0
+    val durationMinutes: Int = 0,
+    val serviceIds: List<String> = emptyList()
 ) {
     val savings: Double
         get() = (originalPrice - price).coerceAtLeast(0.0)
@@ -159,6 +168,8 @@ data class BookingItem(
     val salonPhotoUrl: String = "",
     val serviceId: String = "",
     val serviceName: String,
+    /** Every service in this booking, in order (a parlour visit can have several). */
+    val serviceIds: List<String> = emptyList(),
     val staffId: String? = null,
     val stylistName: String = "Stylist",
     val price: Double,
@@ -180,7 +191,11 @@ data class BookingItem(
     val paymentStatus: String = "not_required", // "not_required", "pending", "paid", "refund_pending", "refunded", "forfeited", "failed"
     val amountDue: Double = 0.0,
     val amountPaid: Double = 0.0
-)
+) {
+    /** Services of this booking in order; older single-service bookings fall back to [serviceId]. */
+    val bookedServiceIds: List<String>
+        get() = serviceIds.ifEmpty { listOf(serviceId).filter { it.isNotBlank() } }
+}
 
 /** Razorpay order returned by the create-payment-order Edge Function. */
 data class PaymentOrder(

@@ -1,7 +1,5 @@
 package com.example.ui.book
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -58,9 +56,16 @@ fun BookingFlowScreen(
 
     var salon by remember { mutableStateOf<Salon?>(null) }
     var allServices by remember { mutableStateOf<List<ServiceItem>>(emptyList()) }
-    var selectedService by remember { mutableStateOf<ServiceItem?>(null) }
-    var isComboSelected by remember { mutableStateOf(false) }
+    var allCombos by remember { mutableStateOf<List<ComboItem>>(emptyList()) }
+    // What is being booked: one or more services done back-to-back, or a package (combo).
+    var selectedServices by remember { mutableStateOf<List<ServiceItem>>(emptyList()) }
     var selectedComboItem by remember { mutableStateOf<ComboItem?>(null) }
+    val combo = selectedComboItem
+    val bookingServiceIds = combo?.serviceIds ?: selectedServices.map { it.id }
+    val bookingKey = combo?.id ?: bookingServiceIds.joinToString(",")
+    val bookingTitle = combo?.name ?: selectedServices.joinToString(" + ") { it.name }
+    val bookingPrice = combo?.price ?: selectedServices.sumOf { it.price }
+    val bookingMinutes = combo?.durationMinutes ?: selectedServices.sumOf { it.duration }
 
     // Step B: Stylist state
     val cleanInitialStaffId = staffId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
@@ -97,36 +102,36 @@ fun BookingFlowScreen(
         val services = salonRepo.getServices(salonId)
         val combos = salonRepo.getCombos(salonId)
         allServices = services
+        allCombos = combos
 
-        if (!comboId.isNullOrEmpty()) {
-            val combo = combos.find { it.id == comboId }
-            selectedComboItem = combo
-            isComboSelected = true
-            // Also select first service as fallback
-            selectedService = services.firstOrNull()
-        } else if (!serviceId.isNullOrEmpty()) {
-            selectedService = services.find { it.id == serviceId } ?: services.firstOrNull()
-            isComboSelected = false
+        val pickedCombo = comboId?.let { id -> combos.find { it.id == id } }
+        if (pickedCombo != null) {
+            selectedComboItem = pickedCombo
         } else {
-            selectedService = services.firstOrNull()
-            isComboSelected = false
+            val first = serviceId?.let { id -> services.find { it.id == id } } ?: services.firstOrNull()
+            selectedServices = listOfNotNull(first)
         }
         isLoadingInitial = false
     }
 
-    // Refresh Stylists when Selected Service Changes
-    LaunchedEffect(selectedService?.id) {
-        val srv = selectedService ?: return@LaunchedEffect
-        staffList = salonRepo.getStaffForService(srv.id, salonId)
+    // Stylists who can do everything that was picked (one stylist does the whole visit)
+    LaunchedEffect(bookingKey) {
+        if (bookingServiceIds.isEmpty()) {
+            staffList = emptyList()
+            return@LaunchedEffect
+        }
+        val list = salonRepo.getStaffForServices(bookingServiceIds, salonId)
+        staffList = list
+        if (selectedStaffId != null && list.none { it.id == selectedStaffId }) selectedStaffId = null
     }
 
     // Refresh Dates Availability when Stylist changes or Service changes
-    LaunchedEffect(selectedService?.id, selectedStaffId) {
-        val srv = selectedService ?: return@LaunchedEffect
+    LaunchedEffect(bookingKey, selectedStaffId) {
+        if (bookingServiceIds.isEmpty()) return@LaunchedEffect
         val window = salon?.bookingWindowDays ?: 14
         isLoadingDates = true
         val cleanStaff = selectedStaffId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
-        val days = salonRepo.getWeekAvailability(srv.id, cleanStaff, window)
+        val days = salonRepo.getWeekAvailability(bookingServiceIds, cleanStaff, window)
         dayAvailabilityList = days
         isLoadingDates = false
 
@@ -139,21 +144,25 @@ fun BookingFlowScreen(
 
     // Real free-slot count per stylist for the selected day (shown on each stylist card).
     var staffSlotCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
-    LaunchedEffect(selectedDay?.dateString, selectedService?.id, staffList) {
-        val srv = selectedService ?: return@LaunchedEffect
+    LaunchedEffect(selectedDay?.dateString, bookingKey, staffList) {
         val day = selectedDay ?: return@LaunchedEffect
         staffSlotCounts = emptyMap()
-        staffSlotCounts = staffList.associate { st -> st.id to salonRepo.getAvailableSlots(srv.id, st.id, day.dateString).size }
+        if (bookingServiceIds.isEmpty()) return@LaunchedEffect
+        staffSlotCounts = staffList.associate { st -> st.id to salonRepo.getAvailableSlots(bookingServiceIds, st.id, day.dateString).size }
     }
 
     // Refresh Slots when Selected Date or Stylist changes
-    LaunchedEffect(selectedDay?.dateString, selectedStaffId, selectedService?.id) {
-        val srv = selectedService ?: return@LaunchedEffect
+    LaunchedEffect(selectedDay?.dateString, selectedStaffId, bookingKey) {
         val day = selectedDay ?: return@LaunchedEffect
+        if (bookingServiceIds.isEmpty()) {
+            availableSlots = emptyList()
+            selectedSlot = null
+            return@LaunchedEffect
+        }
         isLoadingSlots = true
         inlineErrorMessage = null
         val cleanStaff = selectedStaffId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
-        val slots = salonRepo.getAvailableSlots(srv.id, cleanStaff, day.dateString)
+        val slots = salonRepo.getAvailableSlots(bookingServiceIds, cleanStaff, day.dateString)
         availableSlots = slots
         isLoadingSlots = false
 
@@ -168,13 +177,13 @@ fun BookingFlowScreen(
     }
 
     fun refreshSlotsAfterConflict() {
-        val srv = selectedService ?: return
+        val ids = bookingServiceIds.takeIf { it.isNotEmpty() } ?: return
         val day = selectedDay ?: return
         scope.launch {
             isLoadingSlots = true
             selectedSlot = null
             val cleanStaff = selectedStaffId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
-            availableSlots = salonRepo.getAvailableSlots(srv.id, cleanStaff, day.dateString)
+            availableSlots = salonRepo.getAvailableSlots(ids, cleanStaff, day.dateString)
             isLoadingSlots = false
         }
     }
@@ -219,7 +228,7 @@ fun BookingFlowScreen(
     }
 
     val currentSalon = salon!!
-    val currentService = selectedService
+    val hasSelection = bookingServiceIds.isNotEmpty()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -258,7 +267,7 @@ fun BookingFlowScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                         Text(
-                            text = currentService?.name ?: "Select Service",
+                            text = bookingTitle.ifBlank { "Select Service" },
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                             maxLines = 1,
@@ -266,14 +275,14 @@ fun BookingFlowScreen(
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = "₹${currentService?.price?.toInt() ?: 0}",
+                                text = "₹${bookingPrice.toInt()}",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp,
                                 color = Slate900
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "• ${currentService?.formattedDuration ?: "30 min"}",
+                                text = if (bookingMinutes > 0) "• ${ServiceItem.formatDuration(bookingMinutes)}" else "",
                                 fontSize = 12.sp,
                                 color = Slate500
                             )
@@ -303,7 +312,7 @@ fun BookingFlowScreen(
 
                     Button(
                         onClick = {
-                            if (currentService == null || selectedSlot == null || selectedDay == null) return@Button
+                            if (!hasSelection || selectedSlot == null || selectedDay == null) return@Button
                             isSubmitting = true
                             inlineErrorMessage = null
 
@@ -318,7 +327,10 @@ fun BookingFlowScreen(
                                     salonId = currentSalon.id,
                                     salonName = currentSalon.name,
                                     salonArea = "${currentSalon.area}, ${currentSalon.city}",
-                                    service = currentService,
+                                    serviceIds = bookingServiceIds,
+                                    comboId = combo?.id,
+                                    title = bookingTitle,
+                                    totalPrice = bookingPrice,
                                     staffId = cleanStaff,
                                     stylistName = stylistName,
                                     dateFormatted = "${selectedDay?.dayName}, ${selectedDay?.dayNumber}",
@@ -352,10 +364,10 @@ fun BookingFlowScreen(
                                 payingBookingId = booking.id
                                 paymentStage = "Waiting for payment…"
                                 val what = if (paymentOption == "full") "Full payment" else "20% advance"
-                                RazorpayPayments.open(activity, order, "$what • ${currentService.name}", holdSecondsLeft = 14 * 60)
+                                RazorpayPayments.open(activity, order, "$what • $bookingTitle", holdSecondsLeft = 14 * 60)
                             }
                         },
-                        enabled = !isSubmitting && selectedSlot != null && !isComboSelected,
+                        enabled = !isSubmitting && selectedSlot != null && hasSelection,
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Slate900,
@@ -369,9 +381,9 @@ fun BookingFlowScreen(
                             CircularProgressIndicator(color = GoldAccent, modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
                         } else {
                             Text(
-                                text = "Pay ₹${payNowAmount(currentService?.price ?: 0.0, paymentOption).toInt()} & Book",
+                                text = "Pay ₹${payNowAmount(bookingPrice, paymentOption).toInt()} & Book",
                                 fontWeight = FontWeight.Bold,
-                                color = if (selectedSlot != null && !isComboSelected) Color.White else Slate500
+                                color = if (selectedSlot != null && hasSelection) Color.White else Slate500
                             )
                         }
                     }
@@ -387,62 +399,6 @@ fun BookingFlowScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // Combo Limitation Notice
-            if (isComboSelected && selectedComboItem != null) {
-                Surface(
-                    color = GoldContainer,
-                    shape = RoundedCornerShape(14.dp),
-                    border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(GoldPrimary.copy(alpha = 0.5f))),
-                    modifier = Modifier.fillMaxWidth().testTag("combo_limitation_banner")
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Info, contentDescription = null, tint = GoldPrimary, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Combo Package: ${selectedComboItem?.name}",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = Slate900
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Multi-service combo packages require phone confirmation with front desk staff. You can call directly or choose an individual service to book instantly.",
-                            fontSize = 12.sp,
-                            color = Slate700
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            OutlinedButton(
-                                onClick = {
-                                    val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${currentSalon.phone}"))
-                                    context.startActivity(intent)
-                                },
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.height(40.dp)
-                            ) {
-                                Icon(Icons.Default.Phone, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Call Salon to Book", fontSize = 12.sp)
-                            }
-
-                            Button(
-                                onClick = {
-                                    isComboSelected = false
-                                    showServicePickerSheet = true
-                                },
-                                shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Slate900),
-                                modifier = Modifier.height(40.dp)
-                            ) {
-                                Text("Select Individual Service", fontSize = 12.sp, color = Color.White)
-                            }
-                        }
-                    }
-                }
-            }
-
             // Inline Error Banner (Slot clash / auto-refreshed)
             AnimatedVisibility(visible = inlineErrorMessage != null) {
                 Surface(
@@ -501,7 +457,7 @@ fun BookingFlowScreen(
                             modifier = Modifier.testTag("change_service_link")
                         ) {
                             Text(
-                                text = "Change service",
+                                text = if (hasSelection) "Change / add" else "Choose",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = GoldPrimary
@@ -511,39 +467,69 @@ fun BookingFlowScreen(
 
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    if (currentService != null) {
+                    if (combo != null) {
+                        // A package: its services at the package price
                         Text(
-                            text = currentService.name,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            text = "PACKAGE",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = GoldPrimary,
+                            letterSpacing = 1.sp
                         )
-                        if (currentService.description.isNotEmpty()) {
-                            Text(
-                                text = currentService.description,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Slate500,
-                                modifier = Modifier.padding(top = 2.dp)
-                            )
+                        Text(combo.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        combo.serviceNames.forEach { name ->
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                                Icon(Icons.Default.Check, contentDescription = null, tint = EmeraldLive, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(name, fontSize = 13.sp, color = Slate700)
+                            }
                         }
                         Spacer(modifier = Modifier.height(10.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(color = Slate100, shape = RoundedCornerShape(6.dp)) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Default.AccessTime, contentDescription = null, tint = Slate600, modifier = Modifier.size(13.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(currentService.formattedDuration, fontSize = 12.sp, color = Slate700, fontWeight = FontWeight.Medium)
+                        BookingTotalRow(bookingMinutes, bookingPrice, combo.originalPrice.takeIf { it > combo.price })
+                    } else if (selectedServices.isNotEmpty()) {
+                        selectedServices.forEach { srv ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .testTag("selected_service_${srv.id}"),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(srv.name, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    Text(srv.formattedDuration, fontSize = 12.sp, color = Slate500)
+                                }
+                                Text("₹${srv.price.toInt()}", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = Slate900)
+                                if (selectedServices.size > 1) {
+                                    IconButton(
+                                        onClick = { selectedServices = selectedServices.filterNot { it.id == srv.id } },
+                                        modifier = Modifier.size(36.dp).testTag("remove_service_${srv.id}")
+                                    ) {
+                                        Icon(Icons.Default.Close, contentDescription = "Remove", tint = Slate400, modifier = Modifier.size(18.dp))
+                                    }
                                 }
                             }
-                            Spacer(modifier = Modifier.width(10.dp))
+                        }
+                        if (selectedServices.size < MAX_SERVICES_PER_BOOKING) {
+                            TextButton(
+                                onClick = { showServicePickerSheet = true },
+                                contentPadding = PaddingValues(0.dp),
+                                modifier = Modifier.testTag("add_another_service")
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, tint = GoldPrimary, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Add another service", fontSize = 13.sp, color = GoldPrimary, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                        if (selectedServices.size > 1) {
                             Text(
-                                text = "₹${currentService.price.toInt()}",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = Slate900
+                                "One stylist will do all of these back-to-back.",
+                                fontSize = 11.sp,
+                                color = Slate500
                             )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            BookingTotalRow(bookingMinutes, bookingPrice, null)
                         }
                     } else {
                         Button(
@@ -649,6 +635,17 @@ fun BookingFlowScreen(
                         color = Slate500,
                         modifier = Modifier.padding(vertical = 4.dp)
                     )
+
+                    if (hasSelection && staffList.isEmpty()) {
+                        Text(
+                            text = if (bookingServiceIds.size > 1)
+                                "No single stylist here does all of these services. Remove one, or book them separately."
+                            else "No stylist is available for this service right now.",
+                            fontSize = 12.sp,
+                            color = Color(0xFFB91C1C),
+                            modifier = Modifier.padding(vertical = 4.dp).testTag("no_stylist_for_services")
+                        )
+                    }
 
                     // Individual Stylists List
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -927,8 +924,8 @@ fun BookingFlowScreen(
             }
 
             // Step F — How to pay (online, held for 15 minutes until paid)
-            if (currentService != null && !isComboSelected) {
-                val price = currentService.price
+            if (hasSelection) {
+                val price = bookingPrice
                 val advance = payNowAmount(price, "advance")
                 Card(
                     shape = RoundedCornerShape(16.dp),
@@ -997,7 +994,7 @@ fun BookingFlowScreen(
         }
     }
 
-    // Modal Service Picker Sheet
+    // Service picker: tick one or more services (done back-to-back by one stylist), or pick a package.
     if (showServicePickerSheet) {
         ModalBottomSheet(
             onDismissRequest = { showServicePickerSheet = false },
@@ -1009,48 +1006,77 @@ fun BookingFlowScreen(
                     .padding(20.dp)
             ) {
                 Text(
-                    text = "Select a Service",
+                    text = "Choose services",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Choose an a la carte service to book online with instant confirmation",
+                    text = "Tick everything you want in this visit (up to $MAX_SERVICES_PER_BOOKING), or pick a package.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Slate500,
-                    modifier = Modifier.padding(top = 4.dp, bottom = 16.dp)
+                    modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
                 )
 
-                val grouped = allServices.groupBy { it.categoryName.ifEmpty { "Styling & Grooming" } }
+                val grouped = allServices.groupBy { it.categoryName.ifEmpty { "Services" } }
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 420.dp)
                 ) {
-                    grouped.forEach { (catName, services) ->
-                        item {
-                            Surface(
-                                color = Slate100,
-                                shape = RoundedCornerShape(6.dp),
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = catName,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp,
-                                    color = Slate700,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                )
-                            }
-                        }
-
-                        items(services) { srv ->
-                            val isSelected = selectedService?.id == srv.id
+                    if (allCombos.isNotEmpty()) {
+                        item { PickerGroupHeader("Packages") }
+                        items(allCombos) { c ->
+                            val isSelected = combo?.id == c.id
                             Surface(
                                 onClick = {
-                                    selectedService = srv
-                                    isComboSelected = false
+                                    selectedComboItem = c
+                                    selectedServices = emptyList()
                                     showServicePickerSheet = false
                                 },
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isSelected) GoldContainer else Color.White,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .testTag("picker_combo_${c.id}")
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(c.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                        Text(
+                                            c.serviceNames.joinToString(" + ") +
+                                                if (c.durationMinutes > 0) " • ${ServiceItem.formatDuration(c.durationMinutes)}" else "",
+                                            fontSize = 12.sp,
+                                            color = Slate500
+                                        )
+                                    }
+                                    Text("₹${c.price.toInt()}", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Slate900)
+                                }
+                            }
+                        }
+                    }
+
+                    grouped.forEach { (catName, services) ->
+                        item { PickerGroupHeader(catName) }
+                        items(services) { srv ->
+                            val isSelected = combo == null && selectedServices.any { it.id == srv.id }
+                            val canAdd = isSelected || combo != null || selectedServices.size < MAX_SERVICES_PER_BOOKING
+                            Surface(
+                                onClick = {
+                                    if (combo != null) {
+                                        // Switching from a package to individual services
+                                        selectedComboItem = null
+                                        selectedServices = listOf(srv)
+                                    } else if (isSelected) {
+                                        selectedServices = selectedServices.filterNot { it.id == srv.id }
+                                    } else if (canAdd) {
+                                        selectedServices = selectedServices + srv
+                                    }
+                                },
+                                enabled = canAdd,
                                 shape = RoundedCornerShape(10.dp),
                                 color = if (isSelected) GoldContainer else Color.White,
                                 modifier = Modifier
@@ -1061,19 +1087,25 @@ fun BookingFlowScreen(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                        .padding(horizontal = 4.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
+                                    Checkbox(
+                                        checked = isSelected,
+                                        onCheckedChange = null,
+                                        colors = CheckboxDefaults.colors(checkedColor = GoldPrimary)
+                                    )
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(srv.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                        Text(srv.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                                            color = if (canAdd) Slate900 else Slate400)
                                         Text(srv.formattedDuration, fontSize = 12.sp, color = Slate500)
                                     }
                                     Text(
                                         text = "₹${srv.price.toInt()}",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 14.sp,
-                                        color = Slate900
+                                        color = Slate900,
+                                        modifier = Modifier.padding(end = 8.dp)
                                     )
                                 }
                             }
@@ -1081,8 +1113,71 @@ fun BookingFlowScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = { showServicePickerSheet = false },
+                    enabled = hasSelection,
+                    modifier = Modifier.fillMaxWidth().height(50.dp).testTag("picker_done"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Slate900)
+                ) {
+                    Text(
+                        if (hasSelection) "Done • ${ServiceItem.formatDuration(bookingMinutes)} • ₹${bookingPrice.toInt()}"
+                        else "Pick at least one service",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
             }
+        }
+    }
+}
+
+/** Most services one booking can hold (the server enforces the same limit). */
+private const val MAX_SERVICES_PER_BOOKING = 6
+
+@Composable
+private fun PickerGroupHeader(title: String) {
+    Surface(
+        color = Slate100,
+        shape = RoundedCornerShape(6.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)
+    ) {
+        Text(
+            text = title,
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp,
+            color = Slate700,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+        )
+    }
+}
+
+/** Total time and price of the whole visit (with the crossed-out price for a package). */
+@Composable
+private fun BookingTotalRow(minutes: Int, price: Double, originalPrice: Double?) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Surface(color = Slate100, shape = RoundedCornerShape(6.dp)) {
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.AccessTime, contentDescription = null, tint = Slate600, modifier = Modifier.size(13.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(ServiceItem.formatDuration(minutes), fontSize = 12.sp, color = Slate700, fontWeight = FontWeight.Medium)
+            }
+        }
+        Spacer(modifier = Modifier.width(10.dp))
+        Text("Total ₹${price.toInt()}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Slate900)
+        if (originalPrice != null) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                "₹${originalPrice.toInt()}",
+                fontSize = 13.sp,
+                color = Slate400,
+                textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough
+            )
         }
     }
 }

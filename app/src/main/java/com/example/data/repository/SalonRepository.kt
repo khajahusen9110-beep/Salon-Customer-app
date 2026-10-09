@@ -223,7 +223,10 @@ class SalonRepository(private val context: Context) {
                     val obj = arr.getJSONObject(i)
                     val comboId = obj.optString("id")
                     val serviceNamesList = mutableListOf<String>()
+                    val serviceIdList = mutableListOf<String>()
                     var totalDuration = 0
+                    var servicesTotal = 0.0
+                    var hasInactive = false
 
                     val comboServicesArr = obj.optJSONArray("combo_services")
                     if (comboServicesArr != null) {
@@ -233,7 +236,10 @@ class SalonRepository(private val context: Context) {
                             if (srvObj != null) {
                                 val sName = srvObj.optString("name")
                                 if (sName.isNotEmpty()) serviceNamesList.add(sName)
+                                serviceIdList.add(srvObj.optString("id", csObj.optString("service_id")))
                                 totalDuration += srvObj.optInt("duration_minutes", 0)
+                                servicesTotal += srvObj.optDouble("price", 0.0)
+                                if (!srvObj.optBoolean("is_active", true)) hasInactive = true
                             }
                         }
                     }
@@ -247,16 +253,19 @@ class SalonRepository(private val context: Context) {
                         }
                     }
 
+                    // A package with a switched-off service cannot be booked, so it is not shown.
+                    if (hasInactive || serviceIdList.isEmpty()) continue
                     list.add(
                         ComboItem(
                             id = comboId,
                             salonId = obj.optString("salon_id", salonId),
                             name = obj.optString("name", "Package"),
                             price = obj.optDouble("price", 0.0),
-                            originalPrice = obj.optDouble("original_price", obj.optDouble("price", 0.0)),
+                            originalPrice = servicesTotal,
                             description = obj.optString("description", ""),
                             serviceNames = serviceNamesList,
-                            durationMinutes = totalDuration
+                            durationMinutes = totalDuration,
+                            serviceIds = serviceIdList
                         )
                     )
                 }
@@ -381,6 +390,15 @@ class SalonRepository(private val context: Context) {
         return emptyList()
     }
 
+    /** Stylists who can do every one of [serviceIds] (one stylist does the whole visit). */
+    suspend fun getStaffForServices(serviceIds: List<String>, salonId: String): List<StaffMember> {
+        if (serviceIds.size == 1) return getStaffForService(serviceIds.first(), salonId)
+        val ids = supabaseClient.getStaffForServicesRpc(serviceIds).getOrNull()?.let { arr ->
+            (0 until arr.length()).map { arr.getJSONObject(it).optString("staff_id") }.toSet()
+        } ?: return emptyList()
+        return getSalonStaff(salonId).filter { it.id in ids }
+    }
+
     suspend fun getStaffForService(serviceId: String, salonId: String): List<StaffMember> {
         val rpcRes = supabaseClient.getStaffServicesRpc(serviceId)
         if (rpcRes.isSuccess) {
@@ -435,10 +453,13 @@ class SalonRepository(private val context: Context) {
         return emptyList()
     }
 
-    suspend fun getWeekAvailability(serviceId: String, staffId: String?, windowDays: Int = 14): List<DayAvailability> {
+    suspend fun getWeekAvailability(serviceId: String, staffId: String?, windowDays: Int = 14): List<DayAvailability> =
+        getWeekAvailability(listOf(serviceId), staffId, windowDays)
+
+    /** Day strip for all [serviceIds] done back-to-back by one stylist (null stylist = any). */
+    suspend fun getWeekAvailability(serviceIds: List<String>, staffId: String?, windowDays: Int = 14): List<DayAvailability> {
         val cleanStaffId = staffId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
-        Log.d("SlotDebug", "Calling getWeekAvailability with serviceId=$serviceId staffId=$cleanStaffId")
-        val rpcRes = supabaseClient.getWeekAvailabilityRpc(serviceId, cleanStaffId)
+        val rpcRes = supabaseClient.getWeekAvailabilityMultiRpc(serviceIds, cleanStaffId)
         val istZone = TimeZone.getTimeZone("Asia/Kolkata")
         val sdfDate = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = istZone }
         val sdfDayName = SimpleDateFormat("EEE", Locale.US).apply { timeZone = istZone }
@@ -515,16 +536,14 @@ class SalonRepository(private val context: Context) {
         return fallbackDays
     }
 
-    suspend fun getAvailableSlots(serviceId: String, staffId: String?, dateString: String): List<TimeSlot> {
+    suspend fun getAvailableSlots(serviceId: String, staffId: String?, dateString: String): List<TimeSlot> =
+        getAvailableSlots(listOf(serviceId), staffId, dateString)
+
+    /** Free start times for all [serviceIds] done back-to-back by one stylist (null stylist = any). */
+    suspend fun getAvailableSlots(serviceIds: List<String>, staffId: String?, dateString: String): List<TimeSlot> {
+        if (serviceIds.isEmpty()) return emptyList()
         val cleanStaffId = staffId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
-        val cleanDate = dateString.trim()
-        Log.d("SlotDebug", "Calling with serviceId=$serviceId date=$cleanDate staffId=$cleanStaffId")
-        val rpcRes = if (cleanStaffId == null) {
-            supabaseClient.getAvailableSlotsAnyRpc(serviceId, cleanDate)
-        } else {
-            supabaseClient.getAvailableSlotsRpc(cleanStaffId, serviceId, cleanDate)
-        }
-        Log.d("SlotDebug", "Raw result: isSuccess=${rpcRes.isSuccess}, count=${rpcRes.getOrNull()?.length()}")
+        val rpcRes = supabaseClient.getAvailableSlotsMultiRpc(serviceIds, cleanStaffId, dateString.trim())
 
         if (rpcRes.isSuccess) {
             val arr = rpcRes.getOrNull()
@@ -558,7 +577,10 @@ class SalonRepository(private val context: Context) {
         salonId: String,
         salonName: String,
         salonArea: String,
-        service: ServiceItem,
+        serviceIds: List<String>,
+        comboId: String?,
+        title: String,
+        totalPrice: Double,
         staffId: String?,
         stylistName: String,
         dateFormatted: String,
@@ -568,7 +590,7 @@ class SalonRepository(private val context: Context) {
     ): Result<BookingItem> {
         val cleanStaffId = staffId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
         val startIso = timeSlot.slotStart
-        val rpcRes = supabaseClient.createBookingWithPaymentRpc(cleanStaffId, service.id, startIso, paymentOption, notes)
+        val rpcRes = supabaseClient.createMultiBookingRpc(cleanStaffId, serviceIds, comboId, startIso, paymentOption, notes)
 
         if (rpcRes.isFailure) {
             val ex = rpcRes.exceptionOrNull()
@@ -588,11 +610,12 @@ class SalonRepository(private val context: Context) {
             salonId = salonId,
             salonName = salonName,
             salonArea = salonArea,
-            serviceId = service.id,
-            serviceName = service.name,
+            serviceId = serviceIds.firstOrNull().orEmpty(),
+            serviceName = title,
+            serviceIds = serviceIds,
             staffId = staffId,
             stylistName = if (staffId == null) "Fastest Available Stylist" else stylistName,
-            price = service.price,
+            price = totalPrice,
             date = dateFormatted,
             timeSlot = timeSlot.displayTime,
             startTimeIso = startIso,
@@ -1024,7 +1047,7 @@ class SalonRepository(private val context: Context) {
         return Salon(
             id = json.optString("id"),
             name = json.optString("name", "Salon"),
-            salonType = json.optString("salon_type", "Unisex"),
+            salonType = json.optString("salon_type", "unisex").lowercase(),
             area = json.optString("area", ""),
             city = json.optString("city", ""),
             address = json.optString("address", ""),
@@ -1060,7 +1083,14 @@ class SalonRepository(private val context: Context) {
         val sName = salonObj?.optString("name") ?: json.optString("salon_name", "Salon")
         val sArea = salonObj?.optString("area") ?: json.optString("salon_area", "")
         val srvId = json.optString("service_id", serviceObj?.optString("id") ?: "")
-        val srvName = serviceObj?.optString("name") ?: json.optString("service_name", "Service")
+        val summary = json.optString("service_summary").takeIf { !json.isNull("service_summary") && it.isNotBlank() }
+        val srvName = summary ?: serviceObj?.optString("name") ?: json.optString("service_name", "Service")
+        val bsArr = json.optJSONArray("booking_services")
+        val srvIds = if (bsArr != null && bsArr.length() > 0) {
+            (0 until bsArr.length()).map { bsArr.getJSONObject(it) }
+                .sortedBy { it.optInt("position") }
+                .map { it.optString("service_id") }
+        } else listOf(srvId).filter { it.isNotBlank() }
         val stName = staffObj?.optString("name") ?: json.optString("stylist_name", "Stylist")
         val defaultPrice = serviceObj?.optDouble("price", 0.0) ?: 0.0
         val price = json.optDouble("price", defaultPrice)
@@ -1073,6 +1103,7 @@ class SalonRepository(private val context: Context) {
             salonPhotoUrl = salonPhoto,
             serviceId = srvId,
             serviceName = srvName,
+            serviceIds = srvIds,
             staffId = if (json.has("staff_id") && !json.isNull("staff_id")) json.optString("staff_id") else null,
             stylistName = stName,
             price = price,

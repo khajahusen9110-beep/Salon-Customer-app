@@ -890,11 +890,11 @@ fun BookingTrackerScreen(
                             reschedSelectedSlot = null
                             // Load date window for reschedule
                             scope.launch {
-                                reschedDayList = salonRepo.getWeekAvailability(booking.serviceId, booking.staffId)
+                                reschedDayList = salonRepo.getWeekAvailability(booking.bookedServiceIds, booking.staffId)
                                 reschedSelectedDay = reschedDayList.firstOrNull { it.slotCount > 0 } ?: reschedDayList.firstOrNull()
                                 val day = reschedSelectedDay
                                 if (day != null) {
-                                    reschedSlots = salonRepo.getAvailableSlots(booking.serviceId, booking.staffId, day.dateString)
+                                    reschedSlots = salonRepo.getAvailableSlots(booking.bookedServiceIds, booking.staffId, day.dateString)
                                 }
                                 showRescheduleSheet = true
                             }
@@ -1147,7 +1147,7 @@ fun BookingTrackerScreen(
                             onClick = {
                                 reschedSelectedDay = day
                                 scope.launch {
-                                    reschedSlots = salonRepo.getAvailableSlots(booking?.serviceId ?: "", booking?.staffId, day.dateString)
+                                    reschedSlots = salonRepo.getAvailableSlots(booking?.bookedServiceIds.orEmpty(), booking?.staffId, day.dateString)
                                     reschedSelectedSlot = null
                                 }
                             },

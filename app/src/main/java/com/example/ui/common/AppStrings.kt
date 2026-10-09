@@ -13,7 +13,7 @@ object AppStrings {
             "search_placeholder" -> if (isHi) "सैलून का नाम या इलाका खोजें..." else "Search salon name or area..."
             "filter_all" -> if (isHi) "सभी" else "All"
             "filter_men" -> if (isHi) "पुरुष" else "Men"
-            "filter_women" -> if (isHi) "महिलाएँ" else "Women"
+            "filter_women" -> if (isHi) "महिलाएँ / पार्लर" else "Women / Parlour"
             "filter_unisex" -> if (isHi) "यूनिसेक्स" else "Unisex"
             "sort_rating" -> if (isHi) "शीर्ष रेटेड" else "Highest Rated"
             "sort_nearest" -> if (isHi) "निकटतम" else "Nearest"

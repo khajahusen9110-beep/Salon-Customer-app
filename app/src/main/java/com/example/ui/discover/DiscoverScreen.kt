@@ -79,7 +79,9 @@ fun DiscoverScreen(
         var list = salons.filter { it.isVerified && it.isActive }
 
         if (selectedTypeFilter != "All") {
-            list = list.filter { it.salonType.equals(selectedTypeFilter, ignoreCase = true) }
+            // Men / Women also include unisex places; "Unisex" shows only unisex ones.
+            val wanted = selectedTypeFilter.lowercase()
+            list = list.filter { it.salonType == wanted || (wanted != "unisex" && it.salonType == "unisex") }
         }
 
         if (searchQuery.isNotBlank()) {
@@ -552,7 +554,7 @@ fun SalonCard(
                         .align(Alignment.TopStart)
                 ) {
                     Text(
-                        text = salon.salonType.uppercase(),
+                        text = salon.typeLabel.uppercase(),
                         color = Color.White,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,

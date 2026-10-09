@@ -437,7 +437,7 @@ fun SalonDetailScreen(
                             shape = RoundedCornerShape(8.dp)
                         ) {
                             Text(
-                                text = currentSalon.salonType.uppercase(),
+                                text = currentSalon.typeLabel.uppercase(),
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Slate700,
@@ -726,7 +726,8 @@ fun SalonDetailScreen(
 
                 items(combos) { combo ->
                     ComboPackageCard(
-                        combo = combo
+                        combo = combo,
+                        onBook = { onBookService(salonId, null, combo.id) }
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                 }
@@ -1241,7 +1242,8 @@ fun ServiceCard(
 
 @Composable
 fun ComboPackageCard(
-    combo: ComboItem
+    combo: ComboItem,
+    onBook: () -> Unit
 ) {
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -1319,15 +1321,14 @@ fun ComboPackageCard(
                     }
                 }
 
-                // Online booking of packages is not supported by the backend yet (a booking holds a single
-                // service); booking here used to reserve an unrelated service at the wrong price.
-                Text(
-                    text = "Ask at the salon",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Slate600,
-                    modifier = Modifier.testTag("combo_info_${combo.id}")
-                )
+                Button(
+                    onClick = onBook,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                    modifier = Modifier.height(40.dp).testTag("combo_book_${combo.id}")
+                ) {
+                    Text("Book", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
             }
         }
     }

@@ -438,7 +438,7 @@ class SupabaseClient(context: Context) {
     // Combos REST table
     suspend fun getCombos(salonId: String): Result<JSONArray> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/combos?salon_id=eq.$salonId&is_active=eq.true&select=id,salon_id,name,price,is_active,combo_services(service_id,services(id,name,duration_minutes))"
+            val url = "$DEFAULT_BASE_URL/rest/v1/combos?salon_id=eq.$salonId&is_active=eq.true&select=id,salon_id,name,price,is_active,combo_services(service_id,services(id,name,duration_minutes,price,is_active))"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"
@@ -555,158 +555,59 @@ class SupabaseClient(context: Context) {
         }
     }
 
-    // Week Availability RPC
-    suspend fun getWeekAvailabilityRpc(serviceId: String, staffId: String?): Result<JSONArray> = withContext(Dispatchers.IO) {
+    /** POSTs to an RPC that returns rows. */
+    private suspend fun rpcRows(name: String, payload: JSONObject): Result<JSONArray> = withContext(Dispatchers.IO) {
         try {
-            val cleanStaffId = staffId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
-            val url = "$DEFAULT_BASE_URL/rest/v1/rpc/get_week_availability_v2"
-            val payload = JSONObject().apply {
-                put("p_service_id", serviceId)
-                if (cleanStaffId != null) {
-                    put("p_staff_id", cleanStaffId)
-                } else {
-                    put("p_staff_id", JSONObject.NULL)
-                }
-            }
-            Log.d("SlotDebug", "Calling get_week_availability with p_service_id=$serviceId, p_staff_id=$cleanStaffId")
-            val request = buildRequest(url, "POST", payload.toString())
-            val response = httpClient.newCall(request).execute()
-            val body = response.body?.string() ?: "[]"
-            Log.d("SlotDebug", "Raw result get_week_availability: code=${response.code} body=$body")
-            if (response.isSuccessful) {
-                Result.success(JSONArray(body))
-            } else {
-                Result.failure(Exception("Fetch week availability failed: ${response.code} $body"))
+            val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/$name", "POST", payload.toString())
+            httpClient.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: "[]"
+                if (response.isSuccessful) Result.success(JSONArray(body))
+                else Result.failure(Exception("$name failed: ${response.code} $body"))
             }
         } catch (e: Exception) {
-            Log.e("SlotDebug", "get_week_availability failed", e)
+            Log.e("SlotDebug", "$name failed", e)
             Result.failure(e)
         }
     }
 
-    // Available Slots Any Stylist RPC
-    suspend fun getAvailableSlotsAnyRpc(serviceId: String, date: String): Result<JSONArray> = withContext(Dispatchers.IO) {
-        try {
-            val cleanDate = date.trim()
-            val url = "$DEFAULT_BASE_URL/rest/v1/rpc/get_available_slots_any"
-            val payload = JSONObject().apply {
-                put("p_service_id", serviceId)
-                put("p_date", cleanDate)
-            }
-            Log.d("SlotDebug", "Calling get_available_slots_any with serviceId=$serviceId date=$cleanDate")
-            val request = buildRequest(url, "POST", payload.toString())
-            val response = httpClient.newCall(request).execute()
-            val body = response.body?.string() ?: "[]"
-            Log.d("SlotDebug", "Raw result get_available_slots_any: code=${response.code} body=$body")
-            if (response.isSuccessful) {
-                Result.success(JSONArray(body))
-            } else {
-                Result.failure(Exception("Fetch available slots any failed: ${response.code} $body"))
-            }
-        } catch (e: Exception) {
-            Log.e("SlotDebug", "get_available_slots_any failed", e)
-            Result.failure(e)
-        }
-    }
+    private fun idArray(ids: List<String>) = JSONArray().apply { ids.forEach { put(it) } }
 
-    // Available Slots Specific Stylist RPC
-    suspend fun getAvailableSlotsRpc(staffId: String, serviceId: String, date: String): Result<JSONArray> = withContext(Dispatchers.IO) {
-        val cleanStaffId = staffId.trim().takeIf { it.isNotBlank() && it != "null" }
-        val cleanDate = date.trim()
-        if (cleanStaffId == null) {
-            return@withContext getAvailableSlotsAnyRpc(serviceId, cleanDate)
-        }
-        try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/rpc/get_available_slots"
-            val payload = JSONObject().apply {
-                put("p_staff_id", cleanStaffId)
-                put("p_service_id", serviceId)
-                put("p_date", cleanDate)
-            }
-            Log.d("SlotDebug", "Calling get_available_slots with staffId=$cleanStaffId serviceId=$serviceId date=$cleanDate")
-            val request = buildRequest(url, "POST", payload.toString())
-            val response = httpClient.newCall(request).execute()
-            val body = response.body?.string() ?: "[]"
-            Log.d("SlotDebug", "Raw result get_available_slots: code=${response.code} body=$body")
-            if (response.isSuccessful) {
-                Result.success(JSONArray(body))
-            } else {
-                Result.failure(Exception("Fetch available slots failed: ${response.code} $body"))
-            }
-        } catch (e: Exception) {
-            Log.e("SlotDebug", "get_available_slots failed", e)
-            Result.failure(e)
-        }
-    }
+    /** Stylists who can do every one of these services. */
+    suspend fun getStaffForServicesRpc(serviceIds: List<String>): Result<JSONArray> =
+        rpcRows("get_staff_for_services", JSONObject().put("p_service_ids", idArray(serviceIds)))
 
-    // Create Booking Any Stylist RPC
-    suspend fun createBookingAnyStylistRpc(serviceId: String, start: String, notes: String): Result<JSONObject> = withContext(Dispatchers.IO) {
-        try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/rpc/create_booking_any_stylist"
-            val payload = JSONObject().apply {
-                put("p_service_id", serviceId)
-                put("p_start", start)
-                put("p_notes", notes)
-            }
-            val request = buildRequest(url, "POST", payload.toString())
-            val response = httpClient.newCall(request).execute()
-            val body = response.body?.string() ?: "{}"
-            if (response.isSuccessful) {
-                Result.success(parseIdResponse(body))
-            } else {
-                Result.failure(Exception(extractErrorMessage(response.code, body)))
-            }
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
+    /** Day strip for a set of services done back-to-back (null stylist = any stylist). */
+    suspend fun getWeekAvailabilityMultiRpc(serviceIds: List<String>, staffId: String?): Result<JSONArray> =
+        rpcRows("get_week_availability_multi", JSONObject()
+            .put("p_service_ids", idArray(serviceIds))
+            .put("p_staff_id", staffId ?: JSONObject.NULL))
 
-    // Create Booking Specific Stylist RPC
-    suspend fun createBookingRpc(staffId: String, serviceId: String, start: String, notes: String): Result<JSONObject> = withContext(Dispatchers.IO) {
-        val cleanStaffId = staffId.trim().takeIf { it.isNotBlank() && it != "null" }
-        if (cleanStaffId == null) {
-            return@withContext createBookingAnyStylistRpc(serviceId, start, notes)
+    /** Free start times for a set of services (null stylist = any stylist who can do them all). */
+    suspend fun getAvailableSlotsMultiRpc(serviceIds: List<String>, staffId: String?, date: String): Result<JSONArray> =
+        if (staffId == null) {
+            rpcRows("get_available_slots_any_multi", JSONObject()
+                .put("p_service_ids", idArray(serviceIds)).put("p_date", date))
+        } else {
+            rpcRows("get_available_slots_multi", JSONObject()
+                .put("p_staff_id", staffId).put("p_service_ids", idArray(serviceIds)).put("p_date", date))
         }
-        try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/rpc/create_booking"
-            val payload = JSONObject().apply {
-                put("p_staff_id", cleanStaffId)
-                put("p_service_id", serviceId)
-                put("p_start", start)
-                put("p_notes", notes)
-            }
-            val request = buildRequest(url, "POST", payload.toString())
-            val response = httpClient.newCall(request).execute()
-            val body = response.body?.string() ?: "{}"
-            if (response.isSuccessful) {
-                Result.success(parseIdResponse(body))
-            } else {
-                Result.failure(Exception(extractErrorMessage(response.code, body)))
-            }
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
 
     /**
-     * Creates a booking that is paid online. The slot is held for 15 minutes (status pending_payment)
-     * until the payment is verified. [paymentOption] is "advance" (20%) or "full".
+     * Books one or more services (or a combo package) with one stylist, paid online.
+     * The server works out the total time and price; the slot is held for 15 minutes until paid.
      */
-    suspend fun createBookingWithPaymentRpc(
-        staffId: String?, serviceId: String, start: String, paymentOption: String, notes: String
+    suspend fun createMultiBookingRpc(
+        staffId: String?, serviceIds: List<String>, comboId: String?, start: String, paymentOption: String, notes: String
     ): Result<JSONObject> = withContext(Dispatchers.IO) {
         try {
-            val cleanStaffId = staffId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
             val payload = JSONObject()
-                .put("p_service_id", serviceId)
+                .put("p_staff_id", staffId ?: JSONObject.NULL)
+                .put("p_service_ids", if (comboId != null) JSONObject.NULL else idArray(serviceIds))
+                .put("p_combo_id", comboId ?: JSONObject.NULL)
                 .put("p_start", start)
                 .put("p_payment_option", paymentOption)
                 .put("p_notes", notes)
-            val rpc = if (cleanStaffId == null) "create_booking_any_stylist_with_payment" else {
-                payload.put("p_staff_id", cleanStaffId)
-                "create_booking_with_payment"
-            }
-            val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/$rpc", "POST", payload.toString())
+            val request = buildRequest("$DEFAULT_BASE_URL/rest/v1/rpc/create_multi_booking_with_payment", "POST", payload.toString())
             httpClient.newCall(request).execute().use { response ->
                 val body = response.body?.string() ?: "{}"
                 if (response.isSuccessful) Result.success(parseIdResponse(body))
@@ -817,7 +718,7 @@ class SupabaseClient(context: Context) {
     // Customer Bookings REST table
     suspend fun getCustomerBookings(customerId: String): Result<JSONArray> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?select=id,salon_id,service_id,staff_id,status,start_time,end_time,price,notes,payment_option,payment_status,amount_due,amount_paid,hold_expires_at,salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration_minutes,price)&customer_id=eq.$customerId&order=start_time.desc"
+            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?select=id,salon_id,service_id,staff_id,status,start_time,end_time,price,notes,payment_option,payment_status,amount_due,amount_paid,hold_expires_at,service_summary,booking_services(service_id,position),salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration_minutes,price)&customer_id=eq.$customerId&order=start_time.desc"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"
@@ -834,7 +735,7 @@ class SupabaseClient(context: Context) {
     // Single Booking details
     suspend fun getSingleBooking(bookingId: String): Result<JSONObject> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?id=eq.$bookingId&select=id,salon_id,service_id,staff_id,status,start_time,end_time,price,notes,payment_option,payment_status,amount_due,amount_paid,hold_expires_at,salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration_minutes,price)"
+            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?id=eq.$bookingId&select=id,salon_id,service_id,staff_id,status,start_time,end_time,price,notes,payment_option,payment_status,amount_due,amount_paid,hold_expires_at,service_summary,booking_services(service_id,position),salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration_minutes,price)"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"
