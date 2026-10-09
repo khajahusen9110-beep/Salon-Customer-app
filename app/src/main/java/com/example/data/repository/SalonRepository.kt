@@ -349,7 +349,7 @@ class SalonRepository(private val context: Context) {
                             id = obj.optString("id"),
                             salonId = salonId,
                             name = obj.optString("name", "Stylist"),
-                            photoUrl = obj.optString("photo_url", ""),
+                            photoUrl = obj.optString("photo_url", "").takeUnless { obj.isNull("photo_url") }.orEmpty(),
                             ratingAvg = obj.optDouble("rating_avg", 0.0),
                             ratingCount = obj.optInt("rating_count", 0),
                             title = obj.optString("title", "Stylist")
@@ -377,7 +377,7 @@ class SalonRepository(private val context: Context) {
                                 id = staffObj.optString("id", row.optString("staff_id")),
                                 salonId = salonId,
                                 name = staffObj.optString("name", "Stylist"),
-                                photoUrl = staffObj.optString("photo_url", ""),
+                                photoUrl = staffObj.optString("photo_url", "").takeUnless { staffObj.isNull("photo_url") }.orEmpty(),
                                 ratingAvg = staffObj.optDouble("rating_avg", 5.0),
                                 ratingCount = staffObj.optInt("rating_count", 0),
                                 title = staffObj.optString("title", "Stylist")
@@ -402,7 +402,7 @@ class SalonRepository(private val context: Context) {
                             id = staffObj.optString("id"),
                             salonId = salonId,
                             name = staffObj.optString("name", "Stylist"),
-                            photoUrl = staffObj.optString("photo_url", ""),
+                            photoUrl = staffObj.optString("photo_url", "").takeUnless { staffObj.isNull("photo_url") }.orEmpty(),
                             ratingAvg = staffObj.optDouble("rating_avg", 5.0),
                             ratingCount = staffObj.optInt("rating_count", 0),
                             title = staffObj.optString("title", "Stylist")
