@@ -1186,11 +1186,14 @@ fun ServiceCard(
             Spacer(modifier = Modifier.width(14.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = service.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = service.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    service.weddingLabel?.let { com.example.ui.book.WeddingBadge(it) }
+                }
 
                 if (service.description.isNotBlank()) {
                     Text(

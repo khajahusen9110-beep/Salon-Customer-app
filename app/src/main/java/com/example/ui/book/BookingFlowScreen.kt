@@ -66,6 +66,10 @@ fun BookingFlowScreen(
     val bookingTitle = combo?.name ?: selectedServices.joinToString(" + ") { it.name }
     val bookingPrice = combo?.price ?: selectedServices.sumOf { it.price }
     val bookingMinutes = combo?.durationMinutes ?: selectedServices.sumOf { it.duration }
+    // Wedding (Bridal / Groom) bookings: bigger advance and a longer free-cancellation period.
+    var weddingRules by remember { mutableStateOf(WeddingRules()) }
+    val isWedding = combo?.isWedding ?: selectedServices.any { it.weddingType != null }
+    val advancePercent = if (isWedding) weddingRules.advancePercent else 20
 
     // Step B: Stylist state
     val cleanInitialStaffId = staffId?.trim()?.takeIf { it.isNotBlank() && it != "null" }
@@ -103,6 +107,7 @@ fun BookingFlowScreen(
         val combos = salonRepo.getCombos(salonId)
         allServices = services
         allCombos = combos
+        weddingRules = salonRepo.getWeddingRules()
 
         val pickedCombo = comboId?.let { id -> combos.find { it.id == id } }
         if (pickedCombo != null) {
@@ -363,7 +368,7 @@ fun BookingFlowScreen(
                                 }
                                 payingBookingId = booking.id
                                 paymentStage = "Waiting for payment…"
-                                val what = if (paymentOption == "full") "Full payment" else "20% advance"
+                                val what = if (paymentOption == "full") "Full payment" else "$advancePercent% advance"
                                 RazorpayPayments.open(activity, order, "$what • $bookingTitle", holdSecondsLeft = 14 * 60)
                             }
                         },
@@ -381,7 +386,7 @@ fun BookingFlowScreen(
                             CircularProgressIndicator(color = GoldAccent, modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
                         } else {
                             Text(
-                                text = "Pay ₹${payNowAmount(bookingPrice, paymentOption).toInt()} & Book",
+                                text = "Pay ₹${payNowAmount(bookingPrice, paymentOption, advancePercent).toInt()} & Book",
                                 fontWeight = FontWeight.Bold,
                                 color = if (selectedSlot != null && hasSelection) Color.White else Slate500
                             )
@@ -497,7 +502,10 @@ fun BookingFlowScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text(srv.name, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(srv.name, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                        srv.weddingLabel?.let { WeddingBadge(it) }
+                                    }
                                     Text(srv.formattedDuration, fontSize = 12.sp, color = Slate500)
                                 }
                                 Text("₹${srv.price.toInt()}", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = Slate900)
@@ -926,7 +934,7 @@ fun BookingFlowScreen(
             // Step F — How to pay (online, held for 15 minutes until paid)
             if (hasSelection) {
                 val price = bookingPrice
-                val advance = payNowAmount(price, "advance")
+                val advance = payNowAmount(price, "advance", advancePercent)
                 Card(
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -938,7 +946,7 @@ fun BookingFlowScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                         PaymentOptionRow(
                             selected = paymentOption == "advance",
-                            title = "Pay 20% advance now — ₹${advance.toInt()}",
+                            title = "Pay $advancePercent% advance now — ₹${advance.toInt()}",
                             subtitle = "Pay the remaining ₹${(price - advance).toInt()} at the salon",
                             tag = "pay_option_advance"
                         ) { paymentOption = "advance" }
@@ -950,10 +958,15 @@ fun BookingFlowScreen(
                         ) { paymentOption = "full" }
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Free cancellation up to 2 hours before your appointment (full refund). " +
+                            text = if (isWedding)
+                                "Wedding booking: free cancellation up to ${weddingRules.freeCancelDays} days before (full refund). " +
+                                    "Cancelling later or not showing up: the amount paid is not refunded. " +
+                                    "You can change the date only until then."
+                            else "Free cancellation up to 2 hours before your appointment (full refund). " +
                                 "Cancelling later or not showing up: the amount paid is not refunded.",
                             fontSize = 11.sp,
-                            color = Slate500
+                            color = if (isWedding) Color(0xFF9D174D) else Slate500,
+                            modifier = Modifier.testTag("cancellation_terms_text")
                         )
                     }
                 }
@@ -1096,8 +1109,11 @@ fun BookingFlowScreen(
                                         colors = CheckboxDefaults.colors(checkedColor = GoldPrimary)
                                     )
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(srv.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
-                                            color = if (canAdd) Slate900 else Slate400)
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(srv.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                                                color = if (canAdd) Slate900 else Slate400)
+                                            srv.weddingLabel?.let { WeddingBadge(it) }
+                                        }
                                         Text(srv.formattedDuration, fontSize = 12.sp, color = Slate500)
                                     }
                                     Text(
@@ -1131,6 +1147,24 @@ fun BookingFlowScreen(
                 Spacer(modifier = Modifier.height(12.dp))
             }
         }
+    }
+}
+
+/** Small pink tag on Bridal / Groom services. */
+@Composable
+fun WeddingBadge(label: String) {
+    Surface(
+        color = Color(0xFFFCE7F3),
+        shape = RoundedCornerShape(6.dp),
+        modifier = Modifier.padding(start = 6.dp)
+    ) {
+        Text(
+            text = label.uppercase(),
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF9D174D),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
     }
 }
 
@@ -1234,9 +1268,9 @@ fun FlowTimeSlotRow(
     }
 }
 
-/** Amount charged online now; the server computes the same (20% advance rounded up, or the full price). */
-private fun payNowAmount(price: Double, option: String): Double =
-    if (option == "full") price else kotlin.math.max(1.0, kotlin.math.ceil(price * 20 / 100.0))
+/** Amount charged online now; the server computes the same (advance % rounded up, or the full price). */
+private fun payNowAmount(price: Double, option: String, advancePercent: Int): Double =
+    if (option == "full") price else kotlin.math.max(1.0, kotlin.math.ceil(price * advancePercent / 100.0))
 
 private fun android.content.Context.findActivity(): android.app.Activity? {
     var ctx: android.content.Context? = this

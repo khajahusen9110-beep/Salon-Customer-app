@@ -94,8 +94,13 @@ data class ServiceItem(
     val description: String = "",
     val imageUrl: String? = null,
     val isActive: Boolean = true,
-    val isExpress: Boolean = false
+    val isExpress: Boolean = false,
+    /** null = regular, "bridal" or "groom" = wedding service (wedding booking rules apply). */
+    val weddingType: String? = null
 ) {
+    val weddingLabel: String?
+        get() = when (weddingType) { "bridal" -> "Bridal"; "groom" -> "Groom"; else -> null }
+
     val formattedDuration: String
         get() = formatDuration(duration)
 
@@ -119,7 +124,8 @@ data class ComboItem(
     val description: String = "",
     val serviceNames: List<String> = emptyList(),
     val durationMinutes: Int = 0,
-    val serviceIds: List<String> = emptyList()
+    val serviceIds: List<String> = emptyList(),
+    val isWedding: Boolean = false
 ) {
     val savings: Double
         get() = (originalPrice - price).coerceAtLeast(0.0)
@@ -190,7 +196,8 @@ data class BookingItem(
     val paymentOption: String = "pay_at_salon", // "pay_at_salon", "advance", "full"
     val paymentStatus: String = "not_required", // "not_required", "pending", "paid", "refund_pending", "refunded", "forfeited", "failed"
     val amountDue: Double = 0.0,
-    val amountPaid: Double = 0.0
+    val amountPaid: Double = 0.0,
+    val isWedding: Boolean = false
 ) {
     /** Services of this booking in order; older single-service bookings fall back to [serviceId]. */
     val bookedServiceIds: List<String>
@@ -268,3 +275,6 @@ data class NotificationItem(
     val createdAtIso: String = "",
     val relativeTime: String = "Just now"
 )
+
+/** Platform rules for wedding (Bridal / Groom) bookings. */
+data class WeddingRules(val advancePercent: Int = 40, val freeCancelDays: Int = 15)

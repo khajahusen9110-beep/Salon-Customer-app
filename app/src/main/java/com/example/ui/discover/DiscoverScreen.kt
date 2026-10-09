@@ -66,6 +66,13 @@ fun DiscoverScreen(
     var showAmenitySheet by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { amenities = salonRepo.loadAmenities() }
 
+    // Wedding filter: salons offering Bridal / Groom services
+    var weddingOnly by remember { mutableStateOf(false) }
+    var weddingSalonIds by remember { mutableStateOf<Set<String>?>(null) }
+    LaunchedEffect(weddingOnly) {
+        if (weddingOnly && weddingSalonIds == null) weddingSalonIds = salonRepo.getWeddingSalonIds()
+    }
+
     LaunchedEffect(reloadKey, location, amenityFilter) {
         val loc = location ?: return@LaunchedEffect
         isLoading = true
@@ -75,8 +82,12 @@ fun DiscoverScreen(
         isLoading = false
     }
 
-    val filteredSalons = remember(salons, searchQuery, selectedTypeFilter, sortBy) {
+    val filteredSalons = remember(salons, searchQuery, selectedTypeFilter, sortBy, weddingOnly, weddingSalonIds) {
         var list = salons.filter { it.isVerified && it.isActive }
+        if (weddingOnly) {
+            val ids = weddingSalonIds.orEmpty()
+            list = list.filter { it.id in ids }
+        }
 
         if (selectedTypeFilter != "All") {
             // Men / Women also include unisex places; "Unisex" shows only unisex ones.
@@ -290,6 +301,25 @@ fun DiscoverScreen(
                     Spacer(modifier = Modifier.width(4.dp))
                     VerticalDivider(modifier = Modifier.height(20.dp), color = Slate300)
                     Spacer(modifier = Modifier.width(4.dp))
+
+                    // Wedding filter
+                    FilterChip(
+                        selected = weddingOnly,
+                        onClick = { weddingOnly = !weddingOnly },
+                        label = { Text(if (lang == "hi") "शादी (Bridal / Groom)" else "Wedding", fontSize = 12.sp) },
+                        leadingIcon = { Icon(Icons.Default.Favorite, contentDescription = null, modifier = Modifier.size(14.dp)) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = Color(0xFF9D174D),
+                            selectedLabelColor = Color.White,
+                            selectedLeadingIconColor = Color.White
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = weddingOnly,
+                            borderColor = Slate200
+                        ),
+                        modifier = Modifier.testTag("filter_wedding")
+                    )
 
                     // Facilities filter
                     FilterChip(

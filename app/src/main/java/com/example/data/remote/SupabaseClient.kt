@@ -362,6 +362,27 @@ class SupabaseClient(context: Context) {
         }
     }
 
+    /** Plain GET of a REST path (after /rest/v1/) returning rows. */
+    private suspend fun getRows(path: String): Result<JSONArray> = withContext(Dispatchers.IO) {
+        try {
+            httpClient.newCall(buildRequest("$DEFAULT_BASE_URL/rest/v1/$path")).execute().use { response ->
+                val body = response.body?.string() ?: "[]"
+                if (response.isSuccessful) Result.success(JSONArray(body))
+                else Result.failure(Exception(extractErrorMessage(response.code, body)))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /** Platform wedding booking rules (advance %, free-cancellation days). Signed-in users only. */
+    suspend fun getWeddingRules(): Result<JSONArray> =
+        getRows("platform_settings?select=wedding_advance_percent,wedding_free_cancel_days")
+
+    /** Salons offering Bridal / Groom services: [{salon_id}]. */
+    suspend fun getWeddingSalonIds(): Result<JSONArray> =
+        getRows("services?wedding_type=not.is.null&is_active=eq.true&select=salon_id")
+
     /** Cities that have at least one live salon: [{city, salon_count}]. */
     suspend fun listCities(): Result<JSONArray> = withContext(Dispatchers.IO) {
         try {
@@ -419,7 +440,7 @@ class SupabaseClient(context: Context) {
         try {
             // Only services at least one active stylist does (bookable:...!inner drops the rest).
             val url = "$DEFAULT_BASE_URL/rest/v1/services?salon_id=eq.$salonId&is_active=eq.true" +
-                "&select=id,salon_id,category_id,name,duration_minutes,price,description,image_url,is_active,is_express," +
+                "&select=id,salon_id,category_id,name,duration_minutes,price,description,image_url,is_active,is_express,wedding_type," +
                 "service_categories(id,name),bookable:staff_services!inner(staff!inner(id))" +
                 "&bookable.staff.is_active=eq.true&order=price.asc"
             val request = buildRequest(url)
@@ -438,7 +459,7 @@ class SupabaseClient(context: Context) {
     // Combos REST table
     suspend fun getCombos(salonId: String): Result<JSONArray> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/combos?salon_id=eq.$salonId&is_active=eq.true&select=id,salon_id,name,price,is_active,combo_services(service_id,services(id,name,duration_minutes,price,is_active))"
+            val url = "$DEFAULT_BASE_URL/rest/v1/combos?salon_id=eq.$salonId&is_active=eq.true&select=id,salon_id,name,price,is_active,combo_services(service_id,services(id,name,duration_minutes,price,is_active,wedding_type))"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"
@@ -718,7 +739,7 @@ class SupabaseClient(context: Context) {
     // Customer Bookings REST table
     suspend fun getCustomerBookings(customerId: String): Result<JSONArray> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?select=id,salon_id,service_id,staff_id,status,start_time,end_time,price,notes,payment_option,payment_status,amount_due,amount_paid,hold_expires_at,service_summary,booking_services(service_id,position),salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration_minutes,price)&customer_id=eq.$customerId&order=start_time.desc"
+            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?select=id,salon_id,service_id,staff_id,status,start_time,end_time,price,notes,payment_option,payment_status,amount_due,amount_paid,hold_expires_at,service_summary,is_wedding,booking_services(service_id,position),salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration_minutes,price)&customer_id=eq.$customerId&order=start_time.desc"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"
@@ -735,7 +756,7 @@ class SupabaseClient(context: Context) {
     // Single Booking details
     suspend fun getSingleBooking(bookingId: String): Result<JSONObject> = withContext(Dispatchers.IO) {
         try {
-            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?id=eq.$bookingId&select=id,salon_id,service_id,staff_id,status,start_time,end_time,price,notes,payment_option,payment_status,amount_due,amount_paid,hold_expires_at,service_summary,booking_services(service_id,position),salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration_minutes,price)"
+            val url = "$DEFAULT_BASE_URL/rest/v1/bookings?id=eq.$bookingId&select=id,salon_id,service_id,staff_id,status,start_time,end_time,price,notes,payment_option,payment_status,amount_due,amount_paid,hold_expires_at,service_summary,is_wedding,booking_services(service_id,position),salons(id,name,area,city,photos,phone),staff(id,name,photo_url),services(id,name,duration_minutes,price)"
             val request = buildRequest(url)
             val response = httpClient.newCall(request).execute()
             val body = response.body?.string() ?: "[]"

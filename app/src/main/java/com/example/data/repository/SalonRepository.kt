@@ -203,7 +203,8 @@ class SalonRepository(private val context: Context) {
                             description = obj.optString("description", ""),
                             imageUrl = img,
                             isActive = obj.optBoolean("is_active", true),
-                            isExpress = obj.optBoolean("is_express", false)
+                            isExpress = obj.optBoolean("is_express", false),
+                            weddingType = obj.optString("wedding_type").takeIf { it == "bridal" || it == "groom" }
                         )
                     )
                 }
@@ -211,6 +212,21 @@ class SalonRepository(private val context: Context) {
             }
         }
         return emptyList()
+    }
+
+    /** Wedding booking rules from the platform (falls back to the published defaults). */
+    suspend fun getWeddingRules(): WeddingRules {
+        val row = supabaseClient.getWeddingRules().getOrNull()?.optJSONObject(0) ?: return WeddingRules()
+        return WeddingRules(
+            advancePercent = row.optInt("wedding_advance_percent", 40),
+            freeCancelDays = row.optInt("wedding_free_cancel_days", 15)
+        )
+    }
+
+    /** Ids of salons that offer Bridal / Groom services. */
+    suspend fun getWeddingSalonIds(): Set<String> {
+        val arr = supabaseClient.getWeddingSalonIds().getOrNull() ?: return emptySet()
+        return (0 until arr.length()).map { arr.getJSONObject(it).optString("salon_id") }.toSet()
     }
 
     suspend fun getCombos(salonId: String): List<ComboItem> {
@@ -227,6 +243,7 @@ class SalonRepository(private val context: Context) {
                     var totalDuration = 0
                     var servicesTotal = 0.0
                     var hasInactive = false
+                    var isWedding = false
 
                     val comboServicesArr = obj.optJSONArray("combo_services")
                     if (comboServicesArr != null) {
@@ -240,6 +257,7 @@ class SalonRepository(private val context: Context) {
                                 totalDuration += srvObj.optInt("duration_minutes", 0)
                                 servicesTotal += srvObj.optDouble("price", 0.0)
                                 if (!srvObj.optBoolean("is_active", true)) hasInactive = true
+                                if (!srvObj.isNull("wedding_type") && srvObj.optString("wedding_type").isNotBlank()) isWedding = true
                             }
                         }
                     }
@@ -265,7 +283,8 @@ class SalonRepository(private val context: Context) {
                             description = obj.optString("description", ""),
                             serviceNames = serviceNamesList,
                             durationMinutes = totalDuration,
-                            serviceIds = serviceIdList
+                            serviceIds = serviceIdList,
+                            isWedding = isWedding
                         )
                     )
                 }
@@ -1119,7 +1138,8 @@ class SalonRepository(private val context: Context) {
             paymentOption = json.optString("payment_option", "pay_at_salon"),
             paymentStatus = json.optString("payment_status", "not_required"),
             amountDue = json.optDouble("amount_due", 0.0),
-            amountPaid = json.optDouble("amount_paid", 0.0)
+            amountPaid = json.optDouble("amount_paid", 0.0),
+            isWedding = json.optBoolean("is_wedding", false)
         )
     }
 }
