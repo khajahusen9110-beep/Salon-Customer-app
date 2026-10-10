@@ -28,4 +28,8 @@ sealed class Screen(val route: String) {
     object BookingTracker : Screen("booking/{bookingId}") {
         fun createRoute(bookingId: String) = "booking/$bookingId"
     }
+
+    object Support : Screen("support?bookingId={bookingId}") {
+        fun createRoute(bookingId: String? = null) = if (bookingId.isNullOrBlank()) "support" else "support?bookingId=$bookingId"
+    }
 }

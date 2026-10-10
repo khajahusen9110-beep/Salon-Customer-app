@@ -44,7 +44,7 @@ import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SalonDetailScreen(
     salonId: String,
@@ -87,6 +87,8 @@ fun SalonDetailScreen(
 
     var isInitialLoading by remember { mutableStateOf(true) }
     var selectedCategoryId by remember { mutableStateOf<String?>(null) }
+    var allAmenities by remember { mutableStateOf<List<Amenity>>(emptyList()) }
+    LaunchedEffect(Unit) { allAmenities = salonRepo.loadAmenities() }
 
     // Fetch individual sections with isolated failure resilience
     suspend fun loadSalonData() {
@@ -435,7 +437,7 @@ fun SalonDetailScreen(
                             shape = RoundedCornerShape(8.dp)
                         ) {
                             Text(
-                                text = currentSalon.salonType.uppercase(),
+                                text = currentSalon.typeLabel.uppercase(),
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Slate700,
@@ -600,6 +602,35 @@ fun SalonDetailScreen(
                 }
             }
 
+            // Facilities (AC, Free WiFi, Parking...)
+            val salonAmenities = allAmenities.filter { it.id in (salon?.amenityIds ?: emptyList()) }
+            if (salonAmenities.isNotEmpty()) {
+                item {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp).padding(top = 16.dp).testTag("salon_facilities")) {
+                        Text(
+                            text = "Facilities",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            salonAmenities.forEach { a ->
+                                Surface(shape = RoundedCornerShape(20.dp), color = Slate100) {
+                                    Text(
+                                        "${a.icon} ${a.name}",
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // 6. Staff / Stylists Section
             if (staffError != null) {
                 item {
@@ -695,7 +726,8 @@ fun SalonDetailScreen(
 
                 items(combos) { combo ->
                     ComboPackageCard(
-                        combo = combo
+                        combo = combo,
+                        onBook = { onBookService(salonId, null, combo.id) }
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                 }
@@ -1154,11 +1186,14 @@ fun ServiceCard(
             Spacer(modifier = Modifier.width(14.dp))
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = service.name,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = service.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    service.weddingLabel?.let { com.example.ui.book.WeddingBadge(it) }
+                }
 
                 if (service.description.isNotBlank()) {
                     Text(
@@ -1210,7 +1245,8 @@ fun ServiceCard(
 
 @Composable
 fun ComboPackageCard(
-    combo: ComboItem
+    combo: ComboItem,
+    onBook: () -> Unit
 ) {
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -1288,15 +1324,14 @@ fun ComboPackageCard(
                     }
                 }
 
-                // Online booking of packages is not supported by the backend yet (a booking holds a single
-                // service); booking here used to reserve an unrelated service at the wrong price.
-                Text(
-                    text = "Ask at the salon",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Slate600,
-                    modifier = Modifier.testTag("combo_info_${combo.id}")
-                )
+                Button(
+                    onClick = onBook,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Slate900),
+                    modifier = Modifier.height(40.dp).testTag("combo_book_${combo.id}")
+                ) {
+                    Text("Book", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
             }
         }
     }
